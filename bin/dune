@@ -1,0 +1,4 @@
+(executable
+ (public_name requin_ocaml)
+ (name main)
+ (libraries requin))
