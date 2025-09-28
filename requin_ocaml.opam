@@ -3,7 +3,6 @@ opam-version: "2.0"
 synopsis: "A rewrite of Requin in OCaml"
 description: "Requin is a chess engine I originally made in Rust."
 maintainer: ["James Tan"]
-authors: ["see AUTHORS file"]
 license: "GPL-3.0"
 tags: ["chess-engine" "uci" "chess" "requin"]
 homepage: "https://github.com/jamestjw/requin_ocaml"
