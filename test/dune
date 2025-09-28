@@ -1,2 +1,3 @@
-(test
- (name test_requin))
+(tests
+ (names test_requin)
+ (libraries base requin inline_tests))

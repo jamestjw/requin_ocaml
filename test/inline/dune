@@ -1,0 +1,6 @@
+(library
+ (name inline_tests)
+ (libraries requin)
+ (inline_tests)
+ (preprocess
+  (pps ppx_inline_test ppx_assert)))

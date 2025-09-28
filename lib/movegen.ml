@@ -283,6 +283,7 @@ module MoveGen = struct
     let them = Types.other_colour us in
     let checks = equal_gen_type gt QUIET_CHECKS in
     let king_sq = P.square_of_pt_and_colour pos Types.KING us in
+    let their_king_sq = P.square_of_pt_and_colour pos Types.KING them in
     let checkers = P.checkers pos in
     let res, target =
       (* Skip generating non-king moves when in double check *)
@@ -299,6 +300,8 @@ module MoveGen = struct
           | QUIETS | QUIET_CHECKS -> BB.bb_not @@ P.pieces pos
           | LEGAL -> failwith "impossible"
         in
+        (* TODO: this feels a bit redundant, am I not checking this somewhere else? *)
+        let target = target |> BB.bb_and @@ BB.bb_not @@ BB.square_bb their_king_sq in
         let res = generate_pawn_moves us gt pos target in
         let res = generate_moves us Types.KNIGHT checks pos target @ res in
         let res = generate_moves us Types.BISHOP checks pos target @ res in
