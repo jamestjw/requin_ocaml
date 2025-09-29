@@ -881,10 +881,7 @@ module Position = struct
   let gives_check ({ side_to_move = us; _ } as pos) m =
     assert (Types.move_is_ok m);
     match moved_piece pos m with
-    | None ->
-      Stdlib.Printf.printf "bad move is is %s\n" (Types.show_move m);
-      Stdlib.print_endline @@ show pos;
-      failwith "Move source contains no piece"
+    | None -> failwith "Move source contains no piece"
     | Some piece ->
       let pt = Types.type_of_piece piece in
       let src = Types.move_src m in

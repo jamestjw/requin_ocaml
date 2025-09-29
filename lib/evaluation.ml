@@ -430,5 +430,9 @@ let evaluate pos _optimism =
   let score = Score.Infix.(score + score' - score'') in
   (* TODO: Figure out this scale factor business *)
   let score = interpolate score (Material.game_phase pos) Material.scale_factor_normal in
-  if Types.equal_colour (P.side_to_move pos) Types.WHITE then score else -score
+  (* let score = if Types.equal_colour (P.side_to_move pos) Types.WHITE then score else -score in *)
+  (* let score = if Types.equal_colour (P.side_to_move pos) Types.BLACK then -score else score in *)
+
+  (* Stdlib.Printf.printf "Eval: %d, Pos: \n%s\n" score @@ P.show pos; *)
+  score
 ;;

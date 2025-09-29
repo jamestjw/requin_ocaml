@@ -6,8 +6,9 @@ module Eval = Evaluation
 
 let initial_alpha = -T.value_mate - 1
 let initial_beta = T.value_mate + 1
+let generate_moves pos = M.generate_legal pos
 
-let rec alpha_beta pos curr_depth max_depth alpha beta ply history =
+let rec alpha_beta pos curr_depth max_depth alpha beta is_white ply history =
   let do_move (alpha, best_move) move =
     (* Stdlib.Printf.printf "doing move %s\n" (T.show_move move); *)
     let score =
@@ -18,6 +19,7 @@ let rec alpha_beta pos curr_depth max_depth alpha beta ply history =
           max_depth
           (-beta)
           (-alpha)
+          (not is_white)
           (ply + 1)
           (move :: history)
     in
@@ -29,20 +31,20 @@ let rec alpha_beta pos curr_depth max_depth alpha beta ply history =
     then Continue_or_stop.Continue (score, Some move)
     else Continue_or_stop.Continue (alpha, best_move)
   in
-  let legal_moves = M.generate_legal pos in
+  let legal_moves = generate_moves pos in
   let remaining_depth = max_depth - curr_depth in
-  let offset = if P.is_white_to_move pos then 1 else -1 in
+  let offset = if is_white then -1 else 1 in
   (* This takes into account the 50 move rule and threehold repetition *)
   if P.is_draw pos ply
   then T.value_draw
   else if List.is_empty legal_moves
   then
     (* Either draw or mate *)
-    if P.is_in_check pos then offset * (T.value_mate - curr_depth) else T.value_draw
+    if P.is_in_check pos then -(T.value_mate - curr_depth) else T.value_draw
   else if remaining_depth = 0 || curr_depth = T.max_ply
   then
     (* TODO: quiescence search *)
-    Eval.evaluate pos 0
+    offset * Eval.evaluate pos 0
   else (
     (* TODO: check TT *)
     (* TODO: move ordering  *)
@@ -51,7 +53,11 @@ let rec alpha_beta pos curr_depth max_depth alpha beta ply history =
 ;;
 
 let get_best_move (pos : P.t) max_depth ply : T.move =
-  let rec iterative_deepening curr_depth moves alpha beta =
+  let score_cmp =
+    compare
+    (* if P.is_white_to_move pos then compare else fun s1 s2 -> compare s2 s1 *)
+  in
+  let rec iterative_deepening curr_depth moves =
     if curr_depth < max_depth
     then (
       let move_scores =
@@ -60,25 +66,24 @@ let get_best_move (pos : P.t) max_depth ply : T.move =
           ( move
           , -alpha_beta
                (P.do_move' (P.copy pos) move)
-               (curr_depth + 1)
-               max_depth
-               alpha
-               beta
+               0
+               curr_depth
+               initial_alpha
+               initial_beta
+               (P.is_white_to_move pos)
                (ply + 1)
-               (move :: []) ))
+               [ move ] ))
       in
       (* TODO: add transposition table entry *)
       let sorted_moves =
-        List.stable_sort move_scores ~compare:(fun (_, s1) (_, s2) -> compare s2 s1)
-        |> List.map ~f:fst
+        List.stable_sort move_scores ~compare:(fun (_, s1) (_, s2) -> score_cmp s2 s1)
       in
-      iterative_deepening (curr_depth + 1) sorted_moves alpha beta)
-    else
-      (* Stdlib.print_endline @@ String.concat ~sep:"," (List.map ~f:T.show_move moves); *)
-      List.hd_exn moves
+      let sorted_moves = sorted_moves |> List.map ~f:fst in
+      iterative_deepening (curr_depth + 1) sorted_moves)
+    else List.hd_exn moves
   in
-  let moves = M.generate_legal pos in
+  let moves = generate_moves pos in
   if List.is_empty moves then failwith "no legal moves";
   if not (max_depth > 0) then failwith "depth needs to be > 0";
-  iterative_deepening 0 moves initial_alpha initial_beta
+  iterative_deepening 0 moves
 ;;
