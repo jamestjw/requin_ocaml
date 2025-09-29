@@ -60,7 +60,7 @@ let get_best_move (pos : P.t) max_depth ply : T.move =
           ( move
           , -alpha_beta
                (P.do_move' (P.copy pos) move)
-               curr_depth
+               (curr_depth + 1)
                max_depth
                alpha
                beta
