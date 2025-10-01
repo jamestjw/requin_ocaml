@@ -667,6 +667,13 @@ module Types = struct
   let depth_offset = -7 (* value used only for TT entry occupancy check *)
 end
 
+module SquareCmp = struct
+  include
+    (val Comparator.make ~compare:Types.compare_square ~sexp_of_t:Types.sexp_of_square)
+
+  type t = Types.square
+end
+
 let%test_unit "test_sq_plus_dir" =
   [%test_result: Types.square option]
     ~expect:(Some Types.F5)
