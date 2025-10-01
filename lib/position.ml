@@ -1,21 +1,3 @@
-(*
-   *   Stockfish, a UCI chess playing engine derived from Glaurung 2.1
- *   Copyright (C) 2004-2024 The Stockfish developers (see AUTHORS file)
- *
- *   Stockfish is free software: you can redistribute it and/or modify
- *   it under the terms of the GNU General Public License as published by
- *   the Free Software Foundation, either version 3 of the License, or
- *   (at your option) any later version.
- *
- *   Stockfish is distributed in the hope that it will be useful,
- *   but WITHOUT ANY WARRANTY; without even the implied warranty of
- *   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- *   GNU General Public License for more details.
- *
- *   You should have received a copy of the GNU General Public License
- *   along with this program.  If not, see <http://www.gnu.org/licenses/>.
-*)
-
 open Base
 open Bitboard
 open Types
@@ -70,7 +52,7 @@ module Position = struct
        involved castling rights. This means that when a piece on that
        square is moved or captured, then the value in the array is
        precisely the change in castling rights. *)
-      castling_rights_mask : int array
+      castling_rights_mask : int Map.M(SquareCmp).t
     ; castling_rook_square : (Types.castling_right, Types.square) Hashtbl.t
     ; castling_path : (Types.castling_right, BB.t) Hashtbl.t
     ; game_ply : int
@@ -463,8 +445,6 @@ module Position = struct
         rook_sq
     =
     let king_sq = square_of_pt_and_colour pos Types.KING colour in
-    let king_sq_enum = Types.square_to_enum king_sq in
-    let rook_sq_enum = Types.square_to_enum rook_sq in
     let cr =
       (* If king < rook, i.e. the king is on the left of the rook, that means that
          we are dealing with kingside castling. *)
@@ -475,15 +455,15 @@ module Position = struct
       | BLACK, false -> Types.BLACK_OOO
     in
     let cr_enum = Types.castling_right_to_enum cr in
+    let castling_rights_mask =
+      Map.update castling_rights_mask king_sq ~f:(fun v ->
+        cr_enum lor Stdlib.Option.value v ~default:0)
+    in
+    let castling_rights_mask =
+      Map.update castling_rights_mask rook_sq ~f:(fun v ->
+        cr_enum lor Stdlib.Option.value v ~default:0)
+    in
     let st = { st with castling_rights = st.castling_rights lor cr_enum } in
-    Array.set
-      castling_rights_mask
-      king_sq_enum
-      (Array.get castling_rights_mask king_sq_enum lor cr_enum);
-    Array.set
-      castling_rights_mask
-      rook_sq_enum
-      (Array.get castling_rights_mask rook_sq_enum lor cr_enum);
     ignore @@ Hashtbl.add castling_rook_square ~key:cr ~data:rook_sq;
     let king_dest_sq =
       Types.relative_sq colour
@@ -503,7 +483,7 @@ module Position = struct
         & BB.bb_not (BB.square_bb king_sq || BB.square_bb rook_sq))
     in
     ignore @@ Hashtbl.add castling_path ~key:cr ~data:path;
-    { pos with st }
+    { pos with st; castling_rights_mask }
   ;;
 
   (*
@@ -1042,12 +1022,12 @@ module Position = struct
             assert (
               Types.equal_piece (Types.mk_piece colour Types.ROOK) (piece_on_exn pos crsq));
             (* Check that the rook has the right castling rights mask *)
-            assert (Array.get castling_rights_mask (Types.square_to_enum crsq) = cr_enum);
+            assert (Map.find_exn castling_rights_mask crsq = cr_enum);
             (* Check that the king also has the right mask *)
             assert (
-              Array.get
+              Map.find_exn
                 castling_rights_mask
-                (Types.square_to_enum @@ square_of_pt_and_colour pos Types.KING colour)
+                (square_of_pt_and_colour pos Types.KING colour)
               land cr_enum
               = cr_enum)));
       true)
@@ -1288,8 +1268,8 @@ module Position = struct
       | None -> key, new_st
     in
     let src_dst_cr_mask =
-      Array.get castling_rights_mask (Types.square_to_enum src)
-      lor Array.get castling_rights_mask (Types.square_to_enum dst)
+      (Map.find castling_rights_mask src |> Option.value ~default:0)
+      lor (Map.find castling_rights_mask dst |> Option.value ~default:0)
     in
     (* Update castling rights if needed *)
     let key, new_st =
@@ -1831,7 +1811,7 @@ module Position = struct
     ; by_type_bb = Array.create ~len:(List.length Types.all_piece_types) BB.empty
     ; by_colour_bb = Array.create ~len:2 BB.empty
     ; piece_count = Array.create ~len:(List.length Types.all_pieces) 0
-    ; castling_rights_mask = Array.create ~len:64 0
+    ; castling_rights_mask = Map.empty (module SquareCmp)
     ; (* TODO: Reduce the repetition? *)
       castling_rook_square =
         Hashtbl.create
@@ -2090,7 +2070,6 @@ module Position = struct
     ; by_type_bb = Array.copy pos.by_type_bb
     ; by_colour_bb = Array.copy pos.by_colour_bb
     ; piece_count = Array.copy pos.piece_count
-    ; castling_rights_mask = Array.copy pos.castling_rights_mask
     ; st =
         { pos.st with
           non_pawn_material = Array.copy pos.st.non_pawn_material
