@@ -23,7 +23,7 @@ module Types = struct
   type colour =
     | WHITE
     | BLACK
-  [@@deriving enum, eq]
+  [@@deriving enum, eq, ord, sexp]
 
   let other_colour = function
     | WHITE -> BLACK
@@ -679,6 +679,22 @@ module PieceCmp = struct
     (val Comparator.make ~compare:Types.compare_piece ~sexp_of_t:Types.sexp_of_piece)
 
   type t = Types.piece
+end
+
+module ColourCmp = struct
+  include
+    (val Comparator.make ~compare:Types.compare_colour ~sexp_of_t:Types.sexp_of_colour)
+
+  type t = Types.colour
+end
+
+module PieceTypeCmp = struct
+  include
+    (val Comparator.make
+           ~compare:Types.compare_piece_type
+           ~sexp_of_t:Types.sexp_of_piece_type)
+
+  type t = Types.piece_type
 end
 
 let%test_unit "test_sq_plus_dir" =

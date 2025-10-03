@@ -43,8 +43,8 @@ module Position = struct
 
   type t =
     { board : Types.piece option array
-    ; by_type_bb : BB.t array
-    ; by_colour_bb : BB.t array
+    ; by_type_bb : BB.t Map.M(PieceTypeCmp).t
+    ; by_colour_bb : BB.t Map.M(ColourCmp).t
     ; piece_count : int Map.M(PieceCmp).t
     ; (* TODO: Verify this
        Every square potentially contains a piece that is involved in
@@ -103,7 +103,7 @@ module Position = struct
   let moved_piece_exn pos m = moved_piece pos m |> Stdlib.Option.get
 
   let pieces_of_pt { by_type_bb; _ } pt =
-    Array.get by_type_bb (Types.piece_type_to_enum pt)
+    Map.find by_type_bb pt |> Stdlib.Option.value ~default:BB.empty
   ;;
 
   let pieces_of_pts pos pts =
@@ -111,7 +111,7 @@ module Position = struct
   ;;
 
   let pieces_of_colour { by_colour_bb; _ } colour =
-    Array.get by_colour_bb (Types.colour_to_enum colour)
+    Map.find by_colour_bb colour |> Stdlib.Option.value ~default:BB.empty
   ;;
 
   (* Get all pieces *)
@@ -264,61 +264,56 @@ module Position = struct
      functional updates alongside with inplace mutations doesn't feel very good. *)
   (* TODO: Consider caching total piece count and by_type_bb for all pieces *)
   let put_piece ({ board; by_type_bb; by_colour_bb; piece_count; _ } as pos) piece sq =
-    let piece_type_enum = Types.piece_type_to_enum @@ Types.type_of_piece piece in
-    let colour_enum = Types.colour_to_enum @@ Types.color_of_piece piece in
     Array.set board (Types.square_to_enum sq) (Some piece);
-    Array.set
-      by_type_bb
-      piece_type_enum
-      (BB.bb_or_sq (Array.get by_type_bb piece_type_enum) sq);
-    Array.set
-      by_colour_bb
-      colour_enum
-      (BB.bb_or_sq (Array.get by_colour_bb colour_enum) sq);
+    let by_type_bb =
+      Map.update by_type_bb (Types.type_of_piece piece) ~f:(fun bb ->
+        BB.bb_or_sq (Stdlib.Option.value bb ~default:BB.empty) sq)
+    in
+    let by_colour_bb =
+      Map.update by_colour_bb (Types.color_of_piece piece) ~f:(fun bb ->
+        BB.bb_or_sq (Stdlib.Option.value bb ~default:BB.empty) sq)
+    in
     let piece_count =
       Map.update piece_count piece ~f:(Option.value_map ~default:1 ~f:Int.succ)
     in
-    { pos with piece_count }
+    { pos with piece_count; by_type_bb; by_colour_bb }
   ;;
 
   let remove_piece ({ board; by_type_bb; by_colour_bb; piece_count; _ } as pos) sq =
     match Array.get board (Types.square_to_enum sq) with
     | Some piece ->
-      let piece_type_enum = Types.piece_type_to_enum @@ Types.type_of_piece piece in
-      let colour_enum = Types.colour_to_enum @@ Types.color_of_piece piece in
-      Array.set
-        by_type_bb
-        piece_type_enum
-        (BB.bb_xor_sq (Array.get by_type_bb piece_type_enum) sq);
-      Array.set
-        by_colour_bb
-        colour_enum
-        (BB.bb_xor_sq (Array.get by_colour_bb colour_enum) sq);
+      let by_type_bb =
+        Map.update by_type_bb (Types.type_of_piece piece) ~f:(fun bb ->
+          BB.bb_xor_sq (Stdlib.Option.value bb ~default:BB.empty) sq)
+      in
+      let by_colour_bb =
+        Map.update by_colour_bb (Types.color_of_piece piece) ~f:(fun bb ->
+          BB.bb_xor_sq (Stdlib.Option.value bb ~default:BB.empty) sq)
+      in
       Array.set board (Types.square_to_enum sq) None;
       let piece_count =
         Map.update piece_count piece ~f:(fun c ->
           Option.value_exn ~message:"piece on the board has no count" c |> Int.pred)
       in
-      { pos with piece_count }
+      { pos with piece_count; by_colour_bb; by_type_bb }
     | None -> failwith "Removing nonexistent piece"
   ;;
 
-  let move_piece { board; by_type_bb; by_colour_bb; _ } src dst =
+  let move_piece ({ board; by_type_bb; by_colour_bb; _ } as pos) src dst =
     match Array.get board (Types.square_to_enum src) with
     | Some piece ->
       let src_dest = BB.square_bb src |> BB.sq_or_bb dst in
-      let piece_type_enum = Types.piece_type_to_enum @@ Types.type_of_piece piece in
-      let colour_enum = Types.colour_to_enum @@ Types.color_of_piece piece in
-      Array.set
-        by_type_bb
-        piece_type_enum
-        (BB.bb_xor (Array.get by_type_bb piece_type_enum) src_dest);
-      Array.set
-        by_colour_bb
-        colour_enum
-        (BB.bb_xor (Array.get by_colour_bb colour_enum) src_dest);
+      let by_type_bb =
+        Map.update by_type_bb (Types.type_of_piece piece) ~f:(fun bb ->
+          BB.bb_xor (Stdlib.Option.value bb ~default:BB.empty) src_dest)
+      in
+      let by_colour_bb =
+        Map.update by_colour_bb (Types.color_of_piece piece) ~f:(fun bb ->
+          BB.bb_xor (Stdlib.Option.value bb ~default:BB.empty) src_dest)
+      in
       Array.set board (Types.square_to_enum src) None;
-      Array.set board (Types.square_to_enum dst) (Some piece)
+      Array.set board (Types.square_to_enum dst) (Some piece);
+      { pos with by_type_bb; by_colour_bb }
     | None -> failwith "Moving nonexistent piece"
   ;;
 
@@ -1295,7 +1290,7 @@ module Position = struct
     in
     (* For castling, this move would have been handled earlier *)
     (* TODO: NNUE stuff *)
-    if not is_castling then move_piece pos src dst;
+    let pos = if not is_castling then move_piece pos src dst else pos in
     (* Some extra work needs to be done for pawn moves *)
     let pos, key, new_st =
       if Types.equal_piece_type Types.PAWN (Types.type_of_piece piece)
@@ -1440,7 +1435,7 @@ module Position = struct
         pos
       | _ ->
         (* Move piece back to where it was originally *)
-        move_piece pos dst src;
+        let pos = move_piece pos dst src in
         (match captured_piece with
          | Some captured_piece ->
            let cap_sq =
@@ -1823,8 +1818,8 @@ module Position = struct
   (* Make empty position *)
   let mk () =
     { board = Array.create ~len:64 None
-    ; by_type_bb = Array.create ~len:(List.length Types.all_piece_types) BB.empty
-    ; by_colour_bb = Array.create ~len:2 BB.empty
+    ; by_type_bb = Map.empty (module PieceTypeCmp)
+    ; by_colour_bb = Map.empty (module ColourCmp)
     ; piece_count = Map.empty (module PieceCmp)
     ; castling_rights_mask = Map.empty (module SquareCmp)
     ; (* TODO: Reduce the repetition? *)
@@ -2082,8 +2077,6 @@ module Position = struct
   let copy pos =
     { pos with
       board = Array.copy pos.board
-    ; by_type_bb = Array.copy pos.by_type_bb
-    ; by_colour_bb = Array.copy pos.by_colour_bb
     ; st =
         { pos.st with
           non_pawn_material = Array.copy pos.st.non_pawn_material
