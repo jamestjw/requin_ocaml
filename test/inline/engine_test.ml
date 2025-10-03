@@ -9,7 +9,9 @@ module T = Types
 
 let create_pos pieces side_to_move =
   let pos = { (P.mk ()) with side_to_move } in
-  List.iter pieces ~f:(fun (piece, sq) -> P.put_piece pos piece sq);
+  let pos =
+    List.fold pieces ~init:pos ~f:(fun pos (piece, sq) -> P.put_piece pos piece sq)
+  in
   let pos = P.set_state pos in
   pos
 ;;

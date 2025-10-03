@@ -51,3 +51,5 @@ module Char = struct
     | _ -> false
   ;;
 end
+
+let map_find m k ~default = Map.find m k |> Stdlib.Option.value ~default

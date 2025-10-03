@@ -45,7 +45,7 @@ module Position = struct
     { board : Types.piece option array
     ; by_type_bb : BB.t array
     ; by_colour_bb : BB.t array
-    ; piece_count : int array
+    ; piece_count : int Map.M(PieceCmp).t
     ; (* TODO: Verify this
        Every square potentially contains a piece that is involved in
        some castling right. The int is the bitwise-or of all the
@@ -128,7 +128,7 @@ module Position = struct
   ;;
 
   let count_by_piece { piece_count; _ } piece =
-    Array.get piece_count @@ Types.piece_to_enum piece
+    Map.find piece_count piece |> Stdlib.Option.value ~default:0
   ;;
 
   let count_by_colour_and_pt pos colour pt =
@@ -263,9 +263,8 @@ module Position = struct
   (* FIXME: Reconsider this mix of mutable and immutable data structure. Using
      functional updates alongside with inplace mutations doesn't feel very good. *)
   (* TODO: Consider caching total piece count and by_type_bb for all pieces *)
-  let put_piece { board; by_type_bb; by_colour_bb; piece_count; _ } piece sq =
+  let put_piece ({ board; by_type_bb; by_colour_bb; piece_count; _ } as pos) piece sq =
     let piece_type_enum = Types.piece_type_to_enum @@ Types.type_of_piece piece in
-    let piece_enum = Types.piece_to_enum piece in
     let colour_enum = Types.colour_to_enum @@ Types.color_of_piece piece in
     Array.set board (Types.square_to_enum sq) (Some piece);
     Array.set
@@ -276,14 +275,16 @@ module Position = struct
       by_colour_bb
       colour_enum
       (BB.bb_or_sq (Array.get by_colour_bb colour_enum) sq);
-    Array.set piece_count piece_enum (Int.succ (Array.get piece_count piece_enum))
+    let piece_count =
+      Map.update piece_count piece ~f:(Option.value_map ~default:1 ~f:Int.succ)
+    in
+    { pos with piece_count }
   ;;
 
-  let remove_piece { board; by_type_bb; by_colour_bb; piece_count; _ } sq =
+  let remove_piece ({ board; by_type_bb; by_colour_bb; piece_count; _ } as pos) sq =
     match Array.get board (Types.square_to_enum sq) with
     | Some piece ->
       let piece_type_enum = Types.piece_type_to_enum @@ Types.type_of_piece piece in
-      let piece_enum = Types.piece_to_enum piece in
       let colour_enum = Types.colour_to_enum @@ Types.color_of_piece piece in
       Array.set
         by_type_bb
@@ -294,7 +295,11 @@ module Position = struct
         colour_enum
         (BB.bb_xor_sq (Array.get by_colour_bb colour_enum) sq);
       Array.set board (Types.square_to_enum sq) None;
-      Array.set piece_count piece_enum (Int.pred (Array.get piece_count piece_enum))
+      let piece_count =
+        Map.update piece_count piece ~f:(fun c ->
+          Option.value_exn ~message:"piece on the board has no count" c |> Int.pred)
+      in
+      { pos with piece_count }
     | None -> failwith "Removing nonexistent piece"
   ;;
 
@@ -647,11 +652,12 @@ module Position = struct
         ~init:UInt64.zero
         ~f:(fun mk pc ->
           let piece_enum = Types.piece_to_enum pc in
+          let cnt = Map.find piece_count pc |> Stdlib.Option.value ~default:0 in
           List.fold
             ~init:mk
             ~f:(fun mk cnt ->
               UInt64.logxor mk @@ Utils.matrix_get zobrist_data.psq piece_enum cnt)
-            Utils.(0 -- (Array.get piece_count piece_enum - 1)))
+            Utils.(0 -- (cnt - 1)))
         Types.all_pieces
     in
     { pos with st = { st with key; pawn_key; material_key; checkers_bb } }
@@ -952,8 +958,8 @@ module Position = struct
     then true
     else (
       (* Check king count *)
-      assert (Array.get piece_count (Types.piece_to_enum Types.W_KING) = 1);
-      assert (Array.get piece_count (Types.piece_to_enum Types.B_KING) = 1);
+      assert (Option.equal ( = ) (Map.find piece_count Types.W_KING) (Some 1));
+      assert (Option.equal ( = ) (Map.find piece_count Types.B_KING) (Some 1));
       (* It musn't be the case that the king of the opposing player is under
          attack on our turn. *)
       assert (
@@ -965,8 +971,8 @@ module Position = struct
         pieces_of_pt pos Types.PAWN
         |> BB.bb_and (BB.bb_or BB.rank_1 BB.rank_8)
         |> BB.bb_is_empty);
-      assert (Array.get piece_count (Types.piece_to_enum Types.W_PAWN) <= 8);
-      assert (Array.get piece_count (Types.piece_to_enum Types.B_PAWN) <= 8);
+      assert (Map.find piece_count Types.W_PAWN |> Stdlib.Option.value ~default:0 <= 8);
+      assert (Map.find piece_count Types.B_PAWN |> Stdlib.Option.value ~default:0 <= 8);
       (* Check bitboards*)
 
       (* Pieces of both colours do not overlap *)
@@ -1046,11 +1052,15 @@ module Position = struct
     let king_dst = Types.relative_sq us (if is_kingside then Types.G1 else Types.C1) in
     (* TODO: Some NNUE stuff here *)
     (* Remove both pieces first since squares could overlap in Chess960 *)
-    remove_piece pos @@ if is_do then king_src else king_dst;
-    remove_piece pos @@ if is_do then rook_src else rook_dst;
-    put_piece pos (Types.mk_piece us Types.KING) (if is_do then king_dst else king_src);
-    put_piece pos (Types.mk_piece us Types.ROOK) (if is_do then rook_dst else rook_src);
-    king_dst, rook_src, rook_dst
+    let pos = remove_piece pos @@ if is_do then king_src else king_dst in
+    let pos = remove_piece pos @@ if is_do then rook_src else rook_dst in
+    let pos =
+      put_piece pos (Types.mk_piece us Types.KING) (if is_do then king_dst else king_src)
+    in
+    let pos =
+      put_piece pos (Types.mk_piece us Types.ROOK) (if is_do then rook_dst else rook_src)
+    in
+    pos, king_dst, rook_src, rook_dst
   ;;
 
   let new_st () =
@@ -1142,11 +1152,7 @@ module Position = struct
      to a StateInfo object. The move is assumed to be legal. Pseudo-legal
      moves should be filtered out before this function is called. *)
   (* TODO: Unit test this *)
-  let do_move
-        ({ st; game_ply; side_to_move = us; piece_count; castling_rights_mask; _ } as pos)
-        m
-        gives_check
-    =
+  let do_move ({ st; game_ply; side_to_move = us; _ } as pos) m gives_check =
     assert (Types.move_is_ok m);
     let key = UInt64.logxor st.key zobrist_data.side in
     let old_st = st in
@@ -1183,22 +1189,22 @@ module Position = struct
      | None -> ());
     (* Handle castling, this also clears out the captured piece, setting
        the stage for the below. *)
-    let captured_piece, dst, key =
+    let pos, captured_piece, dst, key =
       if is_castling
       then (
         let our_rook = Types.mk_piece us Types.ROOK in
         assert (Types.equal_piece piece @@ Types.mk_piece us Types.KING);
         assert (Types.equal_piece (Stdlib.Option.get captured_piece) our_rook);
-        let king_dst, rook_src, rook_dst = do_castling pos true us src dst in
+        let pos, king_dst, rook_src, rook_dst = do_castling pos true us src dst in
         let key =
           UInt64.logxor key (get_zobrist_psq our_rook rook_src)
           |> UInt64.logxor (get_zobrist_psq our_rook rook_dst)
         in
-        None, king_dst, key)
-      else captured_piece, dst, key
+        pos, None, king_dst, key)
+      else pos, captured_piece, dst, key
     in
     (* Handle piece captures *)
-    let key, new_st =
+    let pos, key, new_st =
       match captured_piece with
       | Some captured_piece ->
         let capture_sq = dst in
@@ -1240,20 +1246,21 @@ module Position = struct
             capture_sq, new_st
         in
         (* TODO: NNUE stuff *)
-        remove_piece pos capture_sq;
+        let pos = remove_piece pos capture_sq in
         (* Update material hash key and prefetch access to materialTable *)
         let key = UInt64.logxor key @@ get_zobrist_psq captured_piece capture_sq in
-        ( key
+        ( pos
+        , key
         , { new_st with
             (* Reset rule50 *)
             rule50 = 0
-          ; (* FIXME: What is this really doing? *)
+          ; (* Update the key with the updated count of the captured piece *)
             material_key =
               UInt64.logxor new_st.material_key
               @@ Utils.matrix_get zobrist_data.psq (Types.piece_to_enum captured_piece)
-              @@ Array.get piece_count (Types.piece_to_enum captured_piece)
+              @@ Utils.map_find pos.piece_count captured_piece ~default:0
           } )
-      | None -> key, new_st
+      | None -> pos, key, new_st
     in
     (* Update hash key *)
     let key =
@@ -1268,8 +1275,8 @@ module Position = struct
       | None -> key, new_st
     in
     let src_dst_cr_mask =
-      (Map.find castling_rights_mask src |> Option.value ~default:0)
-      lor (Map.find castling_rights_mask dst |> Option.value ~default:0)
+      (Map.find pos.castling_rights_mask src |> Option.value ~default:0)
+      lor (Map.find pos.castling_rights_mask dst |> Option.value ~default:0)
     in
     (* Update castling rights if needed *)
     let key, new_st =
@@ -1290,7 +1297,7 @@ module Position = struct
     (* TODO: NNUE stuff *)
     if not is_castling then move_piece pos src dst;
     (* Some extra work needs to be done for pawn moves *)
-    let key, new_st =
+    let pos, key, new_st =
       if Types.equal_piece_type Types.PAWN (Types.type_of_piece piece)
       then (
         (* Maybe set en passant square *)
@@ -1312,16 +1319,15 @@ module Position = struct
           else { new_st with ep_square = None }, key
         in
         (* Handle promotion *)
-        let key, new_st =
+        let pos, key, new_st =
           if Types.equal_move_type Types.PROMOTION (Types.get_move_type m)
           then (
             let promote_to = Types.mk_piece us (Types.get_ppt m |> Stdlib.Option.get) in
             assert (Types.equal_rank Types.RANK_8 (Types.relative_rank_of_sq us dst));
             (* Remove the pawn and put the new piece there *)
-            remove_piece pos dst;
-            put_piece pos promote_to dst;
+            let pos = remove_piece pos dst in
+            let pos = put_piece pos promote_to dst in
             (* TODO: NNUE stuff *)
-
             (* Update hash keys *)
             let key =
               UInt64.logxor key (get_zobrist_psq piece dst)
@@ -1332,7 +1338,8 @@ module Position = struct
               (Types.colour_to_enum us)
               (Array.get new_st.non_pawn_material (Types.colour_to_enum us)
                + Types.piece_value promote_to);
-            ( key
+            ( pos
+            , key
             , { new_st with
                 pawn_key = UInt64.logxor new_st.pawn_key (get_zobrist_psq piece dst)
               ; (* TODO: Why -1? *)
@@ -1340,15 +1347,16 @@ module Position = struct
                   UInt64.logxor new_st.material_key
                   @@ get_zobrist_psq_with_count
                        promote_to
-                       (Array.get piece_count (Types.piece_to_enum promote_to) - 1)
+                       (Map.find_exn pos.piece_count promote_to)
                   |> UInt64.logxor
                      @@ get_zobrist_psq_with_count
                           piece
-                          (Array.get piece_count (Types.piece_to_enum piece))
+                          (Map.find_exn pos.piece_count piece)
               } ))
-          else key, new_st
+          else pos, key, new_st
         in
-        ( key
+        ( pos
+        , key
         , { new_st with
             (* Pawn hash key *)
             pawn_key =
@@ -1357,7 +1365,7 @@ module Position = struct
           ; (* Pawn move resets 50-move rule *)
             rule50 = 0
           } ))
-      else key, new_st
+      else pos, key, new_st
     in
     (* TODO: Check that its fine to call attackers_to with old st, AFAIK
        it does not touch `st` so it's fine since `pos` contains updated data. *)
@@ -1411,51 +1419,58 @@ module Position = struct
      | Some pc ->
        assert (not @@ Types.equal_piece_type Types.KING @@ Types.type_of_piece pc)
      | None -> ());
-    if Types.equal_move_type Types.PROMOTION @@ Types.get_move_type m
-    then (
-      let pc = piece_on_exn pos dst in
-      assert (Types.equal_rank Types.RANK_8 (Types.relative_rank_of_sq us dst));
-      assert (
-        Types.equal_piece_type
-          (Types.type_of_piece pc)
-          (Types.get_ppt m |> Stdlib.Option.get));
-      (* Swap the piece with a pawn as the remaining code will handle it *)
-      remove_piece pos dst;
-      put_piece pos (Types.mk_piece us Types.PAWN) dst);
-    (match Types.get_move_type m with
-     | Types.CASTLING -> ignore @@ do_castling pos false us src dst
-     | _ ->
-       (* Move piece back to where it was originally *)
-       move_piece pos dst src;
-       (match captured_piece with
-        | Some captured_piece ->
-          let cap_sq =
-            (* Captured sq is not the destination if it was en passant *)
-            if Types.equal_move_type Types.EN_PASSANT @@ Types.get_move_type m
-            then (
-              let res =
-                Types.sq_sub_dir dst (Types.pawn_push_direction us) |> Stdlib.Option.get
-              in
-              (* Check that it was indeed a pawn move *)
-              assert (Types.equal_piece_type Types.PAWN @@ Types.type_of_piece pc);
-              (* Check that the pawn was on the previous ep_square on the
+    let pos =
+      if Types.equal_move_type Types.PROMOTION @@ Types.get_move_type m
+      then (
+        let pc = piece_on_exn pos dst in
+        assert (Types.equal_rank Types.RANK_8 (Types.relative_rank_of_sq us dst));
+        assert (
+          Types.equal_piece_type
+            (Types.type_of_piece pc)
+            (Types.get_ppt m |> Stdlib.Option.get));
+        (* Swap the piece with a pawn as the remaining code will handle it *)
+        let pos = remove_piece pos dst in
+        put_piece pos (Types.mk_piece us Types.PAWN) dst)
+      else pos
+    in
+    let pos =
+      match Types.get_move_type m with
+      | Types.CASTLING ->
+        ignore @@ do_castling pos false us src dst;
+        pos
+      | _ ->
+        (* Move piece back to where it was originally *)
+        move_piece pos dst src;
+        (match captured_piece with
+         | Some captured_piece ->
+           let cap_sq =
+             (* Captured sq is not the destination if it was en passant *)
+             if Types.equal_move_type Types.EN_PASSANT @@ Types.get_move_type m
+             then (
+               let res =
+                 Types.sq_sub_dir dst (Types.pawn_push_direction us) |> Stdlib.Option.get
+               in
+               (* Check that it was indeed a pawn move *)
+               assert (Types.equal_piece_type Types.PAWN @@ Types.type_of_piece pc);
+               (* Check that the pawn was on the previous ep_square on the
                    6th rank*)
-              assert (
-                Types.equal_square dst
-                @@ Stdlib.Option.get
-                @@ (Stdlib.Option.get previous).ep_square);
-              assert (Types.equal_rank Types.RANK_6 @@ Types.relative_rank_of_sq us dst);
-              (* Check that the supposedly captured pawn is not on its
+               assert (
+                 Types.equal_square dst
+                 @@ Stdlib.Option.get
+                 @@ (Stdlib.Option.get previous).ep_square);
+               assert (Types.equal_rank Types.RANK_6 @@ Types.relative_rank_of_sq us dst);
+               (* Check that the supposedly captured pawn is not on its
                    original square *)
-              assert (Option.is_none @@ piece_on pos res);
-              (* Check that the captured piece was an enemy pawn *)
-              assert (Types.equal_piece captured_piece @@ Types.mk_piece them Types.PAWN);
-              res)
-            else dst
-          in
-          (* Restore the captured piece *)
-          put_piece pos captured_piece cap_sq
-        | None -> ()));
+               assert (Option.is_none @@ piece_on pos res);
+               (* Check that the captured piece was an enemy pawn *)
+               assert (Types.equal_piece captured_piece @@ Types.mk_piece them Types.PAWN);
+               res)
+             else dst
+           in
+           (* Restore the captured piece *)
+           put_piece pos captured_piece cap_sq
+         | None -> pos)
+    in
     let pos = { pos with game_ply = game_ply - 1; st = Stdlib.Option.get previous } in
     assert (pos_is_ok pos);
     pos
@@ -1810,7 +1825,7 @@ module Position = struct
     { board = Array.create ~len:64 None
     ; by_type_bb = Array.create ~len:(List.length Types.all_piece_types) BB.empty
     ; by_colour_bb = Array.create ~len:2 BB.empty
-    ; piece_count = Array.create ~len:(List.length Types.all_pieces) 0
+    ; piece_count = Map.empty (module PieceCmp)
     ; castling_rights_mask = Map.empty (module SquareCmp)
     ; (* TODO: Reduce the repetition? *)
       castling_rook_square =
@@ -1915,7 +1930,7 @@ module Position = struct
                   ~file:(Types.file_of_enum file |> Stdlib.Option.get)
                   ~rank:(Types.rank_of_enum rank |> Stdlib.Option.get)
               in
-              put_piece pos piece sq;
+              let pos = put_piece pos piece sq in
               Utils.Continue (pos, rank, file + 1)
               (* TODO: This should return an error? *)
             | None -> Utils.Continue (pos, rank, file + 1)))
@@ -2069,7 +2084,6 @@ module Position = struct
       board = Array.copy pos.board
     ; by_type_bb = Array.copy pos.by_type_bb
     ; by_colour_bb = Array.copy pos.by_colour_bb
-    ; piece_count = Array.copy pos.piece_count
     ; st =
         { pos.st with
           non_pawn_material = Array.copy pos.st.non_pawn_material

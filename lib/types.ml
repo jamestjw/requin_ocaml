@@ -118,7 +118,7 @@ module Types = struct
     | B_ROOK
     | B_QUEEN
     | B_KING
-  [@@deriving enum, eq, show]
+  [@@deriving enum, eq, show, ord, sexp]
 
   let all_pieces =
     [ W_PAWN
@@ -672,6 +672,13 @@ module SquareCmp = struct
     (val Comparator.make ~compare:Types.compare_square ~sexp_of_t:Types.sexp_of_square)
 
   type t = Types.square
+end
+
+module PieceCmp = struct
+  include
+    (val Comparator.make ~compare:Types.compare_piece ~sexp_of_t:Types.sexp_of_piece)
+
+  type t = Types.piece
 end
 
 let%test_unit "test_sq_plus_dir" =
