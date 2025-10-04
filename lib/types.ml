@@ -697,6 +697,15 @@ module PieceTypeCmp = struct
   type t = Types.piece_type
 end
 
+module CastlingRightCmp = struct
+  include
+    (val Comparator.make
+           ~compare:Types.compare_castling_right
+           ~sexp_of_t:Types.sexp_of_castling_right)
+
+  type t = Types.castling_right
+end
+
 let%test_unit "test_sq_plus_dir" =
   [%test_result: Types.square option]
     ~expect:(Some Types.F5)

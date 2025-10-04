@@ -46,8 +46,8 @@ module Position = struct
        square is moved or captured, then the value in the array is
        precisely the change in castling rights. *)
       castling_rights_mask : int Map.M(SquareCmp).t
-    ; castling_rook_square : (Types.castling_right, Types.square) Hashtbl.t
-    ; castling_path : (Types.castling_right, BB.t) Hashtbl.t
+    ; castling_rook_square : Types.square Map.M(CastlingRightCmp).t
+    ; castling_path : BB.t Map.M(CastlingRightCmp).t
     ; game_ply : int
     ; side_to_move : Types.colour
     ; chess960 : bool
@@ -138,24 +138,18 @@ module Position = struct
 
   let ep_square { st = { ep_square; _ }; _ } = ep_square
 
-  (* TODO: Check what we are calling this with and where its used, maybe
-     expecting enumbit*)
   (* See if any pieces are in the castling path *)
   let castling_impeded ({ castling_path; _ } as pos) cr =
     match cr with
     | Types.WHITE_OO | Types.WHITE_OOO | Types.BLACK_OO | Types.BLACK_OOO ->
-      BB.bb_and
-        (pieces pos)
-        (Hashtbl.find castling_path cr |> Stdlib.Option.value ~default:BB.empty)
+      BB.bb_and (pieces pos) (Utils.map_find castling_path cr ~default:BB.empty)
       |> BB.bb_not_zero
   ;;
 
-  (* TODO: Check what we are calling this with and where its used, maybe
-     expecting enumbit*)
   let castling_rook_square { castling_rook_square; _ } cr =
     match cr with
     | Types.WHITE_OO | Types.WHITE_OOO | Types.BLACK_OO | Types.BLACK_OOO ->
-      Hashtbl.find castling_rook_square cr
+      Map.find castling_rook_square cr
   ;;
 
   (* Returns all the squares attacked by a certain colour *)
@@ -457,7 +451,7 @@ module Position = struct
         cr_enum lor Stdlib.Option.value v ~default:0)
     in
     let st = { st with castling_rights = st.castling_rights lor cr_enum } in
-    ignore @@ Hashtbl.add castling_rook_square ~key:cr ~data:rook_sq;
+    let castling_rook_square = Map.set castling_rook_square ~key:cr ~data:rook_sq in
     let king_dest_sq =
       Types.relative_sq colour
       @@ if Types.is_kingside_castling cr then Types.G1 else Types.C1
@@ -475,8 +469,8 @@ module Position = struct
         (BB.between_bb rook_sq rook_dest_sq || BB.between_bb king_sq king_dest_sq)
         & BB.bb_not (BB.square_bb king_sq || BB.square_bb rook_sq))
     in
-    ignore @@ Hashtbl.add castling_path ~key:cr ~data:path;
-    { pos with st; castling_rights_mask }
+    let castling_path = Map.set castling_path ~key:cr ~data:path in
+    { pos with st; castling_rights_mask; castling_rook_square; castling_path }
   ;;
 
   (*
@@ -1799,25 +1793,8 @@ module Position = struct
     ; by_colour_bb = Map.empty (module ColourCmp)
     ; piece_count = Map.empty (module PieceCmp)
     ; castling_rights_mask = Map.empty (module SquareCmp)
-    ; (* TODO: Reduce the repetition? *)
-      castling_rook_square =
-        Hashtbl.create
-          ~size:(List.length Types.all_castling_rights)
-          ~growth_allowed:false
-          (module struct
-            type t = Types.castling_right [@@deriving sexp, hash]
-
-            let compare = Types.compare_castling_right
-          end)
-    ; castling_path =
-        Hashtbl.create
-          ~size:(List.length Types.all_castling_rights)
-          ~growth_allowed:false
-          (module struct
-            type t = Types.castling_right [@@deriving sexp, hash]
-
-            let compare = Types.compare_castling_right
-          end)
+    ; castling_rook_square = Map.empty (module CastlingRightCmp)
+    ; castling_path = Map.empty (module CastlingRightCmp)
     ; game_ply = 0
     ; side_to_move = Types.WHITE
     ; chess960 = false
@@ -2048,18 +2025,7 @@ module Position = struct
   ;;
 
   let is_in_check pos = BB.bb_not_zero @@ checkers pos
-
-  (* Produces a copy of the position *)
-  (* TODO: remove the dynamically allocated stuff so I don't need to do this *)
-  let copy pos =
-    { pos with
-      castling_rook_square = Hashtbl.copy pos.castling_rook_square
-    ; castling_path = Hashtbl.copy pos.castling_path
-    }
-  ;;
 end
-
-let%test_unit "dummy_test" = ()
 
 (* TODO: Might want to add more tests, just to be sure. *)
 let%test_unit "load_start_position_fen" =
