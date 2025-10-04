@@ -52,7 +52,11 @@ let rec alpha_beta pos curr_depth max_depth alpha beta is_white ply history =
     (* 3. Non-captures *)
     let sorted_moves =
       List.map legal_moves ~f:(fun m ->
-        let score = if P.is_capture pos m then Int.max_value else Int.min_value in
+        let score =
+          if P.is_capture pos m
+          then if P.see_ge pos m 1 then Int.max_value else 0
+          else Int.min_value
+        in
         m, score)
       |> List.sort ~compare:(fun (_, v1) (_, v2) -> compare v2 v1)
       |> List.map ~f:fst
