@@ -30,7 +30,7 @@ module Position = struct
     ; blockers_for_king : BB.t Map.M(ColourCmp).t
     ; pinners : BB.t Map.M(ColourCmp).t
     ; (* Squares checked by each piece type *)
-      check_squares : BB.t array
+      check_squares : BB.t Map.M(PieceTypeCmp).t
     ; captured_piece : Types.piece option
     ; repetition : int
     }
@@ -190,7 +190,7 @@ module Position = struct
 
   (* Get squares from which we would check the enemy king *)
   let check_squares { st = { check_squares; _ }; _ } pt =
-    Array.get check_squares @@ Types.piece_type_to_enum pt
+    Utils.map_find check_squares pt ~default:BB.empty
   ;;
 
   (* Based on a congruential pseudo-random number generator *)
@@ -540,21 +540,23 @@ module Position = struct
     let enemy_colour = Types.other_colour side_to_move in
     (* Get square of opponent's king *)
     let king_sq = square_of_pt_and_colour pos Types.KING enemy_colour in
-    let check_squares = pos.st.check_squares in
-    let set_check_squares pt = Array.set check_squares (Types.piece_type_to_enum pt) in
     let all_pieces = pieces pos in
     (* Populate the table with the squares from which the king may be attacked *)
     let bishop_attacks = BB.attacks_bb_occupied Types.BISHOP king_sq all_pieces in
     let rook_attacks = BB.attacks_bb_occupied Types.ROOK king_sq all_pieces in
-    set_check_squares Types.PAWN (BB.pawn_attacks_bb_from_sq enemy_colour king_sq);
-    set_check_squares
-      Types.KNIGHT
-      (BB.attacks_bb_occupied Types.KNIGHT king_sq all_pieces);
-    set_check_squares Types.BISHOP bishop_attacks;
-    set_check_squares Types.ROOK rook_attacks;
-    set_check_squares Types.QUEEN (BB.bb_or bishop_attacks rook_attacks);
-    set_check_squares Types.KING BB.empty;
-    pos
+    let check_squares =
+      List.fold
+        ~init:pos.st.check_squares
+        ~f:(fun acc (pc, bb) -> Map.set acc ~key:pc ~data:bb)
+        [ Types.PAWN, BB.pawn_attacks_bb_from_sq enemy_colour king_sq
+        ; Types.KNIGHT, BB.attacks_bb_occupied Types.KNIGHT king_sq all_pieces
+        ; Types.BISHOP, bishop_attacks
+        ; Types.ROOK, rook_attacks
+        ; Types.QUEEN, BB.bb_or bishop_attacks rook_attacks
+        ; Types.KING, BB.empty
+        ]
+    in
+    { pos with st = { pos.st with check_squares } }
   ;;
 
   let attackers_to_occupied pos sq occupied =
@@ -1070,7 +1072,7 @@ module Position = struct
     ; checkers_bb = BB.empty
     ; blockers_for_king = Map.empty (module ColourCmp)
     ; pinners = Map.empty (module ColourCmp)
-    ; check_squares = Array.create ~len:(List.length Types.all_piece_types) BB.empty
+    ; check_squares = Map.empty (module PieceTypeCmp)
     ; captured_piece = None
     ; repetition = 0
     }
@@ -1084,22 +1086,14 @@ module Position = struct
     ; checkers_bb = BB.empty
     ; blockers_for_king = Map.empty (module ColourCmp)
     ; pinners = Map.empty (module ColourCmp)
-    ; check_squares = Array.create ~len:(List.length Types.all_piece_types) BB.empty
+    ; check_squares = Map.empty (module PieceTypeCmp)
     ; captured_piece = None
     ; repetition = 0
     }
   ;;
 
   (* Creates a full copy of `st` for null moves *)
-  let new_full_copy_st_from_prev
-        ({ (* These fields need to be duplicated *)
-           check_squares
-         ; _
-         } as st)
-    =
-    (* Copy all the arrays *)
-    { st with previous = Some st; check_squares = Array.copy check_squares }
-  ;;
+  let new_full_copy_st_from_prev st = { st with previous = Some st }
 
   (* Three possible values,
      - 0 : No repetition
@@ -2061,7 +2055,6 @@ module Position = struct
     { pos with
       castling_rook_square = Hashtbl.copy pos.castling_rook_square
     ; castling_path = Hashtbl.copy pos.castling_path
-    ; st = { pos.st with check_squares = Array.copy pos.st.check_squares }
     }
   ;;
 end
