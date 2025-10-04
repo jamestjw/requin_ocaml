@@ -14,7 +14,7 @@ module Position = struct
     { (* These fields are copied when making a move *)
       material_key : key
     ; pawn_key : key
-    ; non_pawn_material : Types.value array
+    ; non_pawn_material : Types.value Map.M(ColourCmp).t
     ; castling_rights : int
     ; (* 50-move rule counter, draw if this reaches 100 as we count in plies *)
       rule50 : int
@@ -212,7 +212,11 @@ module Position = struct
   let material_key { st = { material_key; _ }; _ } = material_key
 
   let non_pawn_material_for_colour { st = { non_pawn_material; _ }; _ } colour =
-    Array.get non_pawn_material @@ Types.colour_to_enum colour
+    Utils.map_find non_pawn_material colour ~default:0
+  ;;
+
+  let non_pawn_material_for_colour_of_st { non_pawn_material; _ } colour =
+    Utils.map_find non_pawn_material colour ~default:0
   ;;
 
   let non_pawn_material pos =
@@ -605,15 +609,18 @@ module Position = struct
       |> BB.bb_and (pieces_of_colour pos (Types.other_colour side_to_move))
     in
     set_check_info pos;
-    let { castling_rights; ep_square; non_pawn_material; _ } = st in
+    let { castling_rights; ep_square; _ } = st in
     let all_pieces = pieces pos in
     let key, pawn_key, white_npm, black_npm =
       do_pieces
         all_pieces
         (UInt64.zero, zobrist_data.no_pawns, Types.value_zero, Types.value_zero)
     in
-    Array.set non_pawn_material (Types.colour_to_enum Types.WHITE) white_npm;
-    Array.set non_pawn_material (Types.colour_to_enum Types.BLACK) black_npm;
+    let non_pawn_material =
+      Map.of_alist_exn
+        (module ColourCmp)
+        [ Types.WHITE, white_npm; Types.BLACK, black_npm ]
+    in
     let key =
       match ep_square with
       | Some ep_square ->
@@ -644,7 +651,9 @@ module Position = struct
             Utils.(0 -- (cnt - 1)))
         Types.all_pieces
     in
-    { pos with st = { st with key; pawn_key; material_key; checkers_bb } }
+    { pos with
+      st = { st with key; pawn_key; material_key; checkers_bb; non_pawn_material }
+    }
   ;;
 
   (* TODO: Unit test this *)
@@ -1050,7 +1059,7 @@ module Position = struct
     ; plies_from_null = 0
     ; ep_square = None
     ; previous = None
-    ; non_pawn_material = Array.create ~len:2 0
+    ; non_pawn_material = Map.empty (module ColourCmp)
     ; key = UInt64.zero
     ; checkers_bb = BB.empty
     ; blockers_for_king = Array.create ~len:2 BB.empty
@@ -1061,15 +1070,9 @@ module Position = struct
     }
   ;;
 
-  let new_st_from_prev
-        ({ (* This needs to be duplicated *)
-           non_pawn_material
-         ; _
-         } as st)
-    =
+  let new_st_from_prev st =
     { st with
       previous = Some st
-    ; non_pawn_material = Array.copy non_pawn_material
     ; (* These need to reinitialised *)
       key = UInt64.zero
     ; checkers_bb = BB.empty
@@ -1084,8 +1087,7 @@ module Position = struct
   (* Creates a full copy of `st` for null moves *)
   let new_full_copy_st_from_prev
         ({ (* These fields need to be duplicated *)
-           non_pawn_material
-         ; blockers_for_king
+           blockers_for_king
          ; pinners
          ; check_squares
          ; _
@@ -1094,7 +1096,6 @@ module Position = struct
     (* Copy all the arrays *)
     { st with
       previous = Some st
-    ; non_pawn_material = Array.copy non_pawn_material
     ; blockers_for_king = Array.copy blockers_for_king
     ; pinners = Array.copy pinners
     ; check_squares = Array.copy check_squares
@@ -1218,11 +1219,11 @@ module Position = struct
               } )
           | _ ->
             let piece_val = Types.piece_value captured_piece in
-            Array.set
-              new_st.non_pawn_material
-              (Types.colour_to_enum them)
-              (Array.get new_st.non_pawn_material (Types.colour_to_enum them) - piece_val);
-            capture_sq, new_st
+            let non_pawn_material =
+              Map.update new_st.non_pawn_material them ~f:(fun v ->
+                Stdlib.Option.get v - piece_val)
+            in
+            capture_sq, { new_st with non_pawn_material }
         in
         (* TODO: NNUE stuff *)
         let pos = remove_piece pos capture_sq in
@@ -1312,17 +1313,16 @@ module Position = struct
               UInt64.logxor key (get_zobrist_psq piece dst)
               |> UInt64.logxor (get_zobrist_psq promote_to dst)
             in
-            Array.set
-              new_st.non_pawn_material
-              (Types.colour_to_enum us)
-              (Array.get new_st.non_pawn_material (Types.colour_to_enum us)
-               + Types.piece_value promote_to);
+            let non_pawn_material =
+              Map.update new_st.non_pawn_material us ~f:(fun v ->
+                Stdlib.Option.value ~default:0 v + Types.piece_value promote_to)
+            in
             ( pos
             , key
             , { new_st with
                 pawn_key = UInt64.logxor new_st.pawn_key (get_zobrist_psq piece dst)
-              ; (* TODO: Why -1? *)
-                material_key =
+              ; non_pawn_material
+              ; material_key =
                   UInt64.logxor new_st.material_key
                   @@ get_zobrist_psq_with_count
                        promote_to
@@ -2062,8 +2062,7 @@ module Position = struct
     { pos with
       st =
         { pos.st with
-          non_pawn_material = Array.copy pos.st.non_pawn_material
-        ; blockers_for_king = Array.copy pos.st.blockers_for_king
+          blockers_for_king = Array.copy pos.st.blockers_for_king
         ; pinners = Array.copy pos.st.pinners
         ; check_squares = Array.copy pos.st.check_squares
         }
