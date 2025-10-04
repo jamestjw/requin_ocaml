@@ -14,7 +14,7 @@ let rec alpha_beta pos curr_depth max_depth alpha beta is_white ply history =
     let score =
       -1
       * alpha_beta
-          (P.do_move' (P.copy pos) move)
+          (P.do_move' pos move)
           (curr_depth + 1)
           max_depth
           (-beta)
@@ -65,7 +65,7 @@ let get_best_move (pos : P.t) max_depth ply : T.move =
           (* TODO: alpha beta from one move should be used to tighten subsequent searches *)
           ( move
           , -alpha_beta
-               (P.do_move' (P.copy pos) move)
+               (P.do_move' pos move)
                0
                curr_depth
                initial_alpha
