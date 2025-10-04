@@ -8,7 +8,7 @@ let initial_alpha = -T.value_mate - 1
 let initial_beta = T.value_mate + 1
 let generate_moves pos = M.generate_legal pos
 
-let rec alpha_beta pos curr_depth max_depth alpha beta is_white ply history =
+let rec alpha_beta pos curr_depth max_depth alpha beta is_white ply history ~may_prune =
   let do_move (alpha, best_move) move =
     let score =
       -1
@@ -21,6 +21,7 @@ let rec alpha_beta pos curr_depth max_depth alpha beta is_white ply history =
           (not is_white)
           (ply + 1)
           (move :: history)
+          ~may_prune:(not @@ P.is_capture pos move)
     in
     if score >= beta
     then
@@ -43,7 +44,22 @@ let rec alpha_beta pos curr_depth max_depth alpha beta is_white ply history =
   else if remaining_depth = 0 || curr_depth = T.max_ply
   then
     (* TODO: quiescence search *)
-    offset * Eval.evaluate pos 0
+    offset * Eval.evaluate pos ()
+  else if
+    remaining_depth = 1
+    && may_prune
+    && (offset * Eval.evaluate pos ()) + T.futility_margin_1 < alpha
+  then
+    (* If a move proves to be futile, we just return alpha since *)
+    (* further continuations are unlikely to raise alpha *)
+    alpha
+  else if
+    remaining_depth = 2
+    && may_prune
+    && (offset * Eval.evaluate pos ()) + T.futility_margin_2 < alpha
+  then
+    (* Same as above *)
+    alpha
   else (
     (* TODO: check TT *)
     (* Move ordering *)
@@ -66,10 +82,6 @@ let rec alpha_beta pos curr_depth max_depth alpha beta is_white ply history =
 ;;
 
 let get_best_move (pos : P.t) max_depth ply : T.move =
-  let score_cmp =
-    compare
-    (* if P.is_white_to_move pos then compare else fun s1 s2 -> compare s2 s1 *)
-  in
   let rec iterative_deepening curr_depth moves =
     if curr_depth < max_depth
     then (
@@ -85,11 +97,12 @@ let get_best_move (pos : P.t) max_depth ply : T.move =
                initial_beta
                (P.is_white_to_move pos)
                (ply + 1)
-               [ move ] ))
+               [ move ]
+               ~may_prune:(not @@ P.is_capture pos move) ))
       in
       (* TODO: add transposition table entry *)
       let sorted_moves =
-        List.stable_sort move_scores ~compare:(fun (_, s1) (_, s2) -> score_cmp s2 s1)
+        List.stable_sort move_scores ~compare:(fun (_, s1) (_, s2) -> compare s2 s1)
       in
       let sorted_moves = sorted_moves |> List.map ~f:fst in
       iterative_deepening (curr_depth + 1) sorted_moves)

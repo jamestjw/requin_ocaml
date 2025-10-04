@@ -90,6 +90,10 @@ module Types = struct
   let rook_value = 1276
   let queen_value = 2538
 
+  (* Value of a minor piece and rook *)
+  let futility_margin_1 = (knight_value + bishop_value) / 2
+  let futility_margin_2 = rook_value
+
   (* TODO: Check if we need an enum of no piece and all pieces types. Wouldn't
      it be nicer to represent the absence of pieces using a None? *)
   type piece_type =
