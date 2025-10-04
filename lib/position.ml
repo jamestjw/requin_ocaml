@@ -27,8 +27,8 @@ module Position = struct
       key : key
     ; checkers_bb : BB.t
     ; previous : state_info option
-    ; blockers_for_king : BB.t array
-    ; pinners : BB.t array
+    ; blockers_for_king : BB.t Map.M(ColourCmp).t
+    ; pinners : BB.t Map.M(ColourCmp).t
     ; (* Squares checked by each piece type *)
       check_squares : BB.t array
     ; captured_piece : Types.piece option
@@ -181,11 +181,11 @@ module Position = struct
   let checkers { st = { checkers_bb; _ }; _ } = checkers_bb
 
   let blockers_for_king { st = { blockers_for_king; _ }; _ } colour =
-    Array.get blockers_for_king @@ Types.colour_to_enum colour
+    Utils.map_find blockers_for_king colour ~default:BB.empty
   ;;
 
   let pinners { st = { pinners; _ }; _ } colour =
-    Array.get pinners @@ Types.colour_to_enum colour
+    Utils.map_find pinners colour ~default:BB.empty
   ;;
 
   (* Get squares from which we would check the enemy king *)
@@ -485,7 +485,10 @@ module Position = struct
    * in check and the slider pieces of color ~c pinning pieces of color c to the
    * king.
   *)
-  let update_slider_blockers ({ st = { blockers_for_king; pinners; _ }; _ } as pos) c =
+  let update_slider_blockers
+        ({ st = { blockers_for_king; pinners; _ } as st; _ } as pos)
+        c
+    =
     let other_c = Types.other_colour c in
     let king_sq = square_of_pt_and_colour pos Types.KING c in
     let our_pieces = pieces_of_colour pos c in
@@ -525,18 +528,19 @@ module Position = struct
       else blockers, pinners
     in
     let blockers_bb, pinners_bb = do_snipers snipers BB.empty BB.empty in
-    Array.set blockers_for_king (Types.colour_to_enum c) blockers_bb;
-    Array.set pinners (Types.colour_to_enum other_c) pinners_bb
+    let blockers_for_king = Map.set blockers_for_king ~key:c ~data:blockers_bb in
+    let pinners = Map.set pinners ~key:other_c ~data:pinners_bb in
+    { pos with st = { st with blockers_for_king; pinners } }
   ;;
 
   (* Sets king attacks to detect if a move gives check *)
-  let set_check_info ({ side_to_move; st; _ } as pos) =
-    update_slider_blockers pos Types.WHITE;
-    update_slider_blockers pos Types.BLACK;
+  let set_check_info ({ side_to_move; _ } as pos) =
+    let pos = update_slider_blockers pos Types.WHITE in
+    let pos = update_slider_blockers pos Types.BLACK in
     let enemy_colour = Types.other_colour side_to_move in
     (* Get square of opponent's king *)
     let king_sq = square_of_pt_and_colour pos Types.KING enemy_colour in
-    let check_squares = st.check_squares in
+    let check_squares = pos.st.check_squares in
     let set_check_squares pt = Array.set check_squares (Types.piece_type_to_enum pt) in
     let all_pieces = pieces pos in
     (* Populate the table with the squares from which the king may be attacked *)
@@ -549,7 +553,8 @@ module Position = struct
     set_check_squares Types.BISHOP bishop_attacks;
     set_check_squares Types.ROOK rook_attacks;
     set_check_squares Types.QUEEN (BB.bb_or bishop_attacks rook_attacks);
-    set_check_squares Types.KING BB.empty
+    set_check_squares Types.KING BB.empty;
+    pos
   ;;
 
   let attackers_to_occupied pos sq occupied =
@@ -574,7 +579,7 @@ module Position = struct
   let attackers_to_sq pos sq = attackers_to_occupied pos sq (pieces pos)
 
   (* TODO: Unit test this *)
-  let set_state ({ st; side_to_move; piece_count; _ } as pos) =
+  let set_state ({ side_to_move; _ } as pos) =
     let rec do_pieces pieces_bb (key, pawn_key, white_npm, black_npm) =
       if BB.bb_not_zero pieces_bb
       then (
@@ -608,8 +613,7 @@ module Position = struct
       attackers_to_sq pos (square_of_pt_and_colour pos Types.KING side_to_move)
       |> BB.bb_and (pieces_of_colour pos (Types.other_colour side_to_move))
     in
-    set_check_info pos;
-    let { castling_rights; ep_square; _ } = st in
+    let pos = set_check_info pos in
     let all_pieces = pieces pos in
     let key, pawn_key, white_npm, black_npm =
       do_pieces
@@ -622,7 +626,7 @@ module Position = struct
         [ Types.WHITE, white_npm; Types.BLACK, black_npm ]
     in
     let key =
-      match ep_square with
+      match pos.st.ep_square with
       | Some ep_square ->
         UInt64.logxor key
         @@ Array.get zobrist_data.en_passant
@@ -637,13 +641,15 @@ module Position = struct
       | Types.WHITE -> key
       | Types.BLACK -> UInt64.logxor key zobrist_data.side
     in
-    let key = UInt64.logxor key @@ Array.get zobrist_data.castling castling_rights in
+    let key =
+      UInt64.logxor key @@ Array.get zobrist_data.castling pos.st.castling_rights
+    in
     let material_key =
       List.fold
         ~init:UInt64.zero
         ~f:(fun mk pc ->
           let piece_enum = Types.piece_to_enum pc in
-          let cnt = Map.find piece_count pc |> Stdlib.Option.value ~default:0 in
+          let cnt = Map.find pos.piece_count pc |> Stdlib.Option.value ~default:0 in
           List.fold
             ~init:mk
             ~f:(fun mk cnt ->
@@ -652,7 +658,7 @@ module Position = struct
         Types.all_pieces
     in
     { pos with
-      st = { st with key; pawn_key; material_key; checkers_bb; non_pawn_material }
+      st = { pos.st with key; pawn_key; material_key; checkers_bb; non_pawn_material }
     }
   ;;
 
@@ -1062,8 +1068,8 @@ module Position = struct
     ; non_pawn_material = Map.empty (module ColourCmp)
     ; key = UInt64.zero
     ; checkers_bb = BB.empty
-    ; blockers_for_king = Array.create ~len:2 BB.empty
-    ; pinners = Array.create ~len:2 BB.empty
+    ; blockers_for_king = Map.empty (module ColourCmp)
+    ; pinners = Map.empty (module ColourCmp)
     ; check_squares = Array.create ~len:(List.length Types.all_piece_types) BB.empty
     ; captured_piece = None
     ; repetition = 0
@@ -1076,8 +1082,8 @@ module Position = struct
     ; (* These need to reinitialised *)
       key = UInt64.zero
     ; checkers_bb = BB.empty
-    ; blockers_for_king = Array.create ~len:2 BB.empty
-    ; pinners = Array.create ~len:2 BB.empty
+    ; blockers_for_king = Map.empty (module ColourCmp)
+    ; pinners = Map.empty (module ColourCmp)
     ; check_squares = Array.create ~len:(List.length Types.all_piece_types) BB.empty
     ; captured_piece = None
     ; repetition = 0
@@ -1087,19 +1093,12 @@ module Position = struct
   (* Creates a full copy of `st` for null moves *)
   let new_full_copy_st_from_prev
         ({ (* These fields need to be duplicated *)
-           blockers_for_king
-         ; pinners
-         ; check_squares
+           check_squares
          ; _
          } as st)
     =
     (* Copy all the arrays *)
-    { st with
-      previous = Some st
-    ; blockers_for_king = Array.copy blockers_for_king
-    ; pinners = Array.copy pinners
-    ; check_squares = Array.copy check_squares
-    }
+    { st with previous = Some st; check_squares = Array.copy check_squares }
   ;;
 
   (* Three possible values,
@@ -1367,8 +1366,8 @@ module Position = struct
     (* We need to construct new `pos` before setting check info as it will
        expect to see the fresh state. *)
     (* Update king attacks used for fast check detection *)
-    set_check_info new_pos;
-    assert (pos_is_ok pos);
+    let new_pos = set_check_info new_pos in
+    assert (pos_is_ok new_pos);
     new_pos
   ;;
 
@@ -1415,7 +1414,7 @@ module Position = struct
     let pos =
       match Types.get_move_type m with
       | Types.CASTLING ->
-        ignore @@ do_castling pos false us src dst;
+        let pos, _, _, _ = do_castling pos false us src dst in
         pos
       | _ ->
         (* Move piece back to where it was originally *)
@@ -1482,7 +1481,7 @@ module Position = struct
     let pos =
       { pos with st = new_st; side_to_move = Types.other_colour pos.side_to_move }
     in
-    set_check_info pos;
+    let pos = set_check_info pos in
     assert (pos_is_ok pos);
     pos
   ;;
@@ -2060,12 +2059,9 @@ module Position = struct
   (* TODO: remove the dynamically allocated stuff so I don't need to do this *)
   let copy pos =
     { pos with
-      st =
-        { pos.st with
-          blockers_for_king = Array.copy pos.st.blockers_for_king
-        ; pinners = Array.copy pos.st.pinners
-        ; check_squares = Array.copy pos.st.check_squares
-        }
+      castling_rook_square = Hashtbl.copy pos.castling_rook_square
+    ; castling_path = Hashtbl.copy pos.castling_path
+    ; st = { pos.st with check_squares = Array.copy pos.st.check_squares }
     }
   ;;
 end
