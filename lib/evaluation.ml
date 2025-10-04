@@ -232,11 +232,9 @@ let mobility_bonus =
   |> Array.of_list
 ;;
 
-(*
-   * Returns a static, purely materialistic evaluation of the position from
- * the point of view of the given color. It can be divided by PawnValue to get
- * an approximation of the material advantage on the board in terms of pawns.
-*)
+(* Returns a static, purely materialistic evaluation of the position from
+  the point of view of the given color. It can be divided by PawnValue to get
+  an approximation of the material advantage on the board in terms of pawns. *)
 let simple_eval pos color =
   let them = Types.other_colour color in
   (Types.pawn_value
