@@ -10,7 +10,6 @@ let generate_moves pos = M.generate_legal pos
 
 let rec alpha_beta pos curr_depth max_depth alpha beta is_white ply history =
   let do_move (alpha, best_move) move =
-    (* Stdlib.Printf.printf "doing move %s\n" (T.show_move move); *)
     let score =
       -1
       * alpha_beta
@@ -47,8 +46,18 @@ let rec alpha_beta pos curr_depth max_depth alpha beta is_white ply history =
     offset * Eval.evaluate pos 0
   else (
     (* TODO: check TT *)
-    (* TODO: move ordering  *)
-    let score = List.fold_until legal_moves ~init:(alpha, None) ~f:do_move ~finish:fst in
+    (* Move ordering *)
+    (* 1. Good captures *)
+    (* 2. Bad captures *)
+    (* 3. Non-captures *)
+    let sorted_moves =
+      List.map legal_moves ~f:(fun m ->
+        let score = if P.is_capture pos m then Int.max_value else Int.min_value in
+        m, score)
+      |> List.sort ~compare:(fun (_, v1) (_, v2) -> compare v2 v1)
+      |> List.map ~f:fst
+    in
+    let score = List.fold_until sorted_moves ~init:(alpha, None) ~f:do_move ~finish:fst in
     score)
 ;;
 
