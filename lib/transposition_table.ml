@@ -26,7 +26,6 @@ let bound_contains b1 b2 =
 type entry =
   { key : UInt32.t
   ; depth : int
-  ; is_pv : bool
   ; bound : bound
   ; move : Types.move
   ; value : Types.value
@@ -37,7 +36,6 @@ type entry =
 let empty_entry =
   { key = UInt32.zero
   ; depth = 0
-  ; is_pv = false
   ; bound = BOUND_NONE
   ; move = Types.none_move
   ; value = Types.value_none
@@ -84,7 +82,6 @@ let store
       ~key
       ~m
       ~depth
-      ~is_pv
       ~bound
       ~value
       ~eval_value
@@ -128,7 +125,6 @@ let store
     ; generation = tt_generation
     ; move = m
     ; depth
-    ; is_pv
     ; bound
     ; value
     ; eval_value
