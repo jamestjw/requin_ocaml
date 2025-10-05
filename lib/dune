@@ -1,6 +1,6 @@
 (library
  (name requin)
- (libraries base integers str)
+ (libraries base integers str domainslib)
  (inline_tests)
  (preprocess
   (pps

@@ -13,6 +13,7 @@ depends: [
   "integers"
   "ppx_jane"
   "ppx_deriving"
+  "domainslib"
   "odoc" {with-doc}
 ]
 build: [

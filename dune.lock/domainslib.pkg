@@ -1,0 +1,17 @@
+(version 0.5.2)
+
+(build
+ (progn
+  (when
+   %{pkg-self:dev}
+   (run dune subst))
+  (run dune build -p %{pkg-self:name} -j %{jobs} @install)))
+
+(depends dune ocaml saturn domain-local-await)
+
+(source
+ (fetch
+  (url
+   https://github.com/ocaml-multicore/domainslib/releases/download/0.5.2/domainslib-0.5.2.tbz)
+  (checksum
+   sha256=a720ece2cb41b2a591ad1a44a2db9ecd5573e8b7b5112e8d46d0f275f9af1caf)))
