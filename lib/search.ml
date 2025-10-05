@@ -4,7 +4,9 @@ module M = Movegen.MoveGen
 module T = Types.Types
 module TT = Transposition_table
 module Eval = Evaluation
+module Task = Domainslib.Task
 
+let parallel = 8
 let initial_alpha = -T.value_mate - 1
 let initial_beta = T.value_mate + 1
 let generate_moves pos = M.generate_legal pos
@@ -154,36 +156,41 @@ let rec alpha_beta pos curr_depth max_depth alpha beta is_white ply history ~may
 ;;
 
 let get_best_move (pos : P.t) max_depth ply : T.move =
-  let rec iterative_deepening curr_depth moves tt =
+  let rec iterative_deepening pool curr_depth moves tt =
     if curr_depth < max_depth
     then
-      (let move_scores =
+      (let promises =
          List.map moves ~f:(fun move ->
            (* TODO: alpha beta from one move should be used to tighten subsequent searches *)
-           ( move
-           , -alpha_beta
-                (P.do_move' pos move)
-                0
-                curr_depth
-                initial_alpha
-                initial_beta
-                (P.is_white_to_move pos)
-                (ply + 1)
-                [ move ]
-                ~may_prune:(not @@ P.is_capture pos move)
-                ~tt ))
+           Task.async pool (fun _ ->
+             ( move
+             , -alpha_beta
+                  (P.do_move' pos move)
+                  0
+                  curr_depth
+                  initial_alpha
+                  initial_beta
+                  (P.is_white_to_move pos)
+                  (ply + 1)
+                  [ move ]
+                  ~may_prune:(not @@ P.is_capture pos move)
+                  ~tt )))
        in
+       let move_scores = List.map ~f:(Task.await pool) promises in
        (* TODO: add transposition table entry *)
        let sorted_moves =
          List.stable_sort move_scores ~compare:(fun (_, s1) (_, s2) -> compare s2 s1)
        in
        let sorted_moves = sorted_moves |> List.map ~f:fst in
-       iterative_deepening (curr_depth + 1) sorted_moves)
+       iterative_deepening pool (curr_depth + 1) sorted_moves)
         tt
     else List.hd_exn moves
   in
   let moves = generate_moves pos in
   if List.is_empty moves then failwith "no legal moves";
   if not (max_depth > 0) then failwith "depth needs to be > 0";
-  iterative_deepening 0 moves (TT.mk ())
+  let pool = Task.setup_pool ~num_domains:parallel () in
+  let res = Task.run pool (fun _ -> iterative_deepening pool 0 moves (TT.mk ())) in
+  Task.teardown_pool pool;
+  res
 ;;

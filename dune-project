@@ -20,6 +20,7 @@
    dune
    integers
    ppx_jane
-   ppx_deriving)
+   ppx_deriving
+   domainslib)
  (tags
   (chess-engine uci chess requin)))
