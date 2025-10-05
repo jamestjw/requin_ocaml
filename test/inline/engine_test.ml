@@ -131,6 +131,15 @@ let%test_unit "black mate in two" =
     assert (T.equal_move best_move @@ T.mk_move T.F1 T.D1)
 ;;
 
+let%test_unit "white mate in three (hard)" =
+  let pos = P.from_fen "7k/4K1pp/7N/8/8/8/8/B7 w - - 0 1" in
+  match pos with
+  | Error _ -> assert false
+  | Ok pos ->
+    let best_move = S.get_best_move pos 5 0 in
+    assert (T.equal_move best_move @@ T.mk_move T.F6 T.A1)
+;;
+
 let%test_unit "black mate in three" =
   let pos = P.from_fen "8/2b2r1P/2P4k/1pK3n1/1N1R1N2/nqp5/8/8 b - - 0 1" in
   match pos with
