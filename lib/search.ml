@@ -59,17 +59,15 @@ let rec pvSearch
     if score >= beta
     then (
       (* TODO: store killer moves *)
-      if not is_null_window
-      then
-        ignore
-        @@ TT.store
-             tt
-             ~key:pos.st.key
-             ~m:move
-             ~depth:remaining_depth
-             ~eval_value
-             ~value:score
-             ~bound:TT.BOUND_LOWER;
+      ignore
+      @@ TT.store
+           tt
+           ~key:pos.st.key
+           ~m:move
+           ~depth:remaining_depth
+           ~eval_value
+           ~value:score
+           ~bound:TT.BOUND_LOWER;
       Continue_or_stop.Stop (beta, best_move, true))
     else if score > alpha
     then Continue_or_stop.Continue (score, Some move, false)
