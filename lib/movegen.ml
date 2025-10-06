@@ -38,7 +38,9 @@ module MoveGen = struct
     in
     let move_list =
       if equal_gen_type gt CAPTURES || all
-      then Types.mk_move ~move_type:Types.PROMOTION ~ppt:Types.QUEEN dst src :: move_list
+      then
+        Types.mk_move ~move_type:Types.PROMOTION ~ppt:(Some Types.QUEEN) dst src
+        :: move_list
       else move_list
     in
     let move_list =
@@ -47,9 +49,9 @@ module MoveGen = struct
         || (equal_gen_type gt QUIETS && not enemy)
         || all
       then
-        Types.mk_move ~move_type:Types.PROMOTION ~ppt:Types.ROOK dst src
-        :: Types.mk_move ~move_type:Types.PROMOTION ~ppt:Types.BISHOP dst src
-        :: Types.mk_move ~move_type:Types.PROMOTION ~ppt:Types.KNIGHT dst src
+        Types.mk_move ~move_type:Types.PROMOTION ~ppt:(Some Types.ROOK) dst src
+        :: Types.mk_move ~move_type:Types.PROMOTION ~ppt:(Some Types.BISHOP) dst src
+        :: Types.mk_move ~move_type:Types.PROMOTION ~ppt:(Some Types.KNIGHT) dst src
         :: move_list
       else move_list
     in

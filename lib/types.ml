@@ -383,7 +383,7 @@ module Types = struct
     | FILE_F
     | FILE_G
     | FILE_H
-  [@@deriving enum, sexp, ord]
+  [@@deriving enum, sexp, ord, eq]
 
   let all_files = [ FILE_A; FILE_B; FILE_C; FILE_D; FILE_E; FILE_F; FILE_G; FILE_H ]
 
@@ -399,6 +399,18 @@ module Types = struct
   [@@deriving enum, sexp, ord, eq]
 
   let all_ranks = [ RANK_1; RANK_2; RANK_3; RANK_4; RANK_5; RANK_6; RANK_7; RANK_8 ]
+
+  let file_of_ch = function
+    | 'a' -> Some FILE_A
+    | 'b' -> Some FILE_B
+    | 'c' -> Some FILE_C
+    | 'd' -> Some FILE_D
+    | 'e' -> Some FILE_E
+    | 'f' -> Some FILE_F
+    | 'g' -> Some FILE_G
+    | 'h' -> Some FILE_H
+    | _ -> None
+  ;;
 
   let sqs_of_rank rank =
     let base = rank_to_enum rank * 8 in
@@ -525,6 +537,15 @@ module Types = struct
     | B_KING -> "k"
   ;;
 
+  let piece_type_to_algebraic = function
+    | PAWN -> ""
+    | BISHOP -> "b"
+    | KNIGHT -> "n"
+    | ROOK -> "r"
+    | QUEEN -> "q"
+    | KING -> ""
+  ;;
+
   let mk_square ~file ~rank =
     Int.shift_left (rank_to_enum rank) 3 + file_to_enum file
     |> square_of_enum
@@ -598,7 +619,7 @@ module Types = struct
      NOTE: en passant bit is set only when a pawn can be captured *)
   (* TODO: If necessary, I can create another version of this function that
      handles the 'fast' case, i.e. for normal move types without ppt. *)
-  let mk_move ?(move_type = NORMAL) ?ppt ?(value = 0) dst src =
+  let mk_move ?(move_type = NORMAL) ?(ppt = None) ?(value = 0) dst src =
     let special_move_flag = move_type_to_enum move_type in
     (* TODO: Perhaps it would be prudent to ensure that this only `Some`
        when move_type == PROMOTION *)
@@ -662,13 +683,39 @@ module Types = struct
     else if not @@ move_not_null move
     then "<null>"
     else
-      Printf.sprintf "%s%s" (show_square @@ move_src move) (show_square @@ move_dst move)
+      Printf.sprintf
+        "%s%s%s"
+        (show_square @@ move_src move)
+        (show_square @@ move_dst move)
+        (get_ppt move |> Option.fold ~init:"" ~f:(fun _ pt -> piece_type_to_algebraic pt))
   ;;
 
   let depth_qs_checks = 0
   let depth_qs_no_checks = -1
   let depth_none = -6
   let depth_offset = -7 (* value used only for TT entry occupancy check *)
+
+  let parse_algrebraic_sq sq =
+    let open Option.Let_syntax in
+    let res =
+      match String.to_list sq with
+      | [ file; rank ] ->
+        let%bind rank = Stdlib.int_of_string_opt @@ String.make 1 rank in
+        let%bind rank = rank_of_enum rank in
+        let%bind file = file_of_ch file in
+        return @@ mk_square ~file ~rank
+      | _ -> None
+    in
+    Result.of_option res ~error:"invalid algebraic square"
+  ;;
+
+  let distance_by_file sq1 sq2 =
+    Int.abs (file_to_enum (file_of_sq sq1) - file_to_enum (file_of_sq sq2))
+  ;;
+
+  let distance_by_rank sq1 sq2 =
+    Int.abs (rank_to_enum (rank_of_sq sq1) - rank_to_enum (rank_of_sq sq2))
+  ;;
 end
 
 module SquareCmp = struct
@@ -821,7 +868,7 @@ let%test_unit "test_normal_pawn_move" =
 
 let%test_unit "test_construct_and_deconstruct_move" =
   let move =
-    Types.mk_move ~ppt:Types.QUEEN Types.E4 Types.E5 ~move_type:Types.EN_PASSANT
+    Types.mk_move ~ppt:(Some Types.QUEEN) Types.E4 Types.E5 ~move_type:Types.EN_PASSANT
   in
   [%test_result: Types.square] ~expect:Types.E5 (Types.move_src move);
   [%test_result: Types.square] ~expect:Types.E4 (Types.move_dst move);
@@ -834,7 +881,8 @@ let%test_unit "test_move_is_ok" =
   [%test_eq: bool] (Types.move_is_ok Types.none_move) false;
   [%test_eq: bool]
     (Types.move_is_ok
-     @@ Types.mk_move ~ppt:Types.QUEEN ~move_type:Types.PROMOTION Types.F7 Types.H8)
+     @@ Types.mk_move ~ppt:(Some Types.QUEEN) ~move_type:Types.PROMOTION Types.F7 Types.H8
+    )
     true
 ;;
 

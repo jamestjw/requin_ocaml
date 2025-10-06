@@ -10,6 +10,6 @@ let _ =
   match pos with
   | Error _ -> assert false
   | Ok pos ->
-    let best_move = S.get_best_move pos 5 0 in
+    let best_move = S.get_best_move pos 5 in
     Stdlib.Printf.printf "best move is %s\n" (Types.show_move best_move)
 ;;
