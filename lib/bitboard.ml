@@ -273,18 +273,6 @@ end = struct
 
   (* Initialisation of bitboards *)
 
-  let distance_by_file sq1 sq2 =
-    Int.abs
-      (Types.file_to_enum (Types.file_of_sq sq1)
-       - Types.file_to_enum (Types.file_of_sq sq2))
-  ;;
-
-  let distance_by_rank sq1 sq2 =
-    Int.abs
-      (Types.rank_to_enum (Types.rank_of_sq sq1)
-       - Types.rank_to_enum (Types.rank_of_sq sq2))
-  ;;
-
   let sq_distance_tbl =
     let tbl = Array.make_matrix ~dimx:64 ~dimy:64 0 in
     List.iter ~f:(fun (sq1, sq2) ->
@@ -292,7 +280,7 @@ end = struct
         tbl
         (Types.square_to_enum sq1)
         (Types.square_to_enum sq2)
-        (Int.max (distance_by_file sq1 sq2) (distance_by_rank sq1 sq2)))
+        (Int.max (Types.distance_by_file sq1 sq2) (Types.distance_by_rank sq1 sq2)))
     @@ List.cartesian_product Types.all_squares Types.all_squares;
     tbl
   ;;

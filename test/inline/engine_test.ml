@@ -20,7 +20,7 @@ let%test_unit "depth_one_white_capture_undefended_rook" =
   let pos =
     create_pos [ T.W_KING, T.E1; T.B_KING, T.E8; T.W_ROOK, T.A1; T.B_ROOK, T.A8 ] T.WHITE
   in
-  let best_move = S.get_best_move pos 1 0 in
+  let best_move = S.get_best_move pos 1 in
   assert (T.equal_move best_move @@ T.mk_move T.A8 T.A1)
 ;;
 
@@ -28,7 +28,7 @@ let%test_unit "depth_one_black_capture_undefended_rook" =
   let pos =
     create_pos [ T.W_KING, T.E1; T.B_KING, T.E8; T.W_ROOK, T.A1; T.B_ROOK, T.A8 ] T.BLACK
   in
-  let best_move = S.get_best_move pos 1 0 in
+  let best_move = S.get_best_move pos 1 in
   assert (T.equal_move best_move @@ T.mk_move T.A1 T.A8)
 ;;
 
@@ -43,7 +43,7 @@ let%test_unit "depth_two_white_win_material" =
       ]
       T.WHITE
   in
-  let best_move = S.get_best_move pos 2 0 in
+  let best_move = S.get_best_move pos 2 in
   (* Capture undefended bishop *)
   assert (T.equal_move best_move @@ T.mk_move T.H4 T.D4)
 ;;
@@ -59,7 +59,7 @@ let%test_unit "depth_two_black_win_material" =
       ]
       T.BLACK
   in
-  let best_move = S.get_best_move pos 3 0 in
+  let best_move = S.get_best_move pos 3 in
   (* Capture undefended bishop *)
   assert (T.equal_move best_move @@ T.mk_move T.A2 T.C2)
 ;;
@@ -71,7 +71,7 @@ let%test_unit "depth_three_white_promotes" =
       T.WHITE
   in
   let pos = P.set_state pos in
-  let best_move = S.get_best_move pos 3 0 in
+  let best_move = S.get_best_move pos 3 in
   assert (T.equal_move best_move @@ T.mk_move T.D8 T.D2)
 ;;
 
@@ -82,7 +82,7 @@ let%test_unit "white_checkmate_in_one" =
   match pos with
   | Error _ -> assert false
   | Ok pos ->
-    let best_move = S.get_best_move pos 1 0 in
+    let best_move = S.get_best_move pos 1 in
     assert (T.equal_move best_move @@ T.mk_move T.F7 T.H5)
 ;;
 
@@ -91,7 +91,7 @@ let%test_unit "black_checkmate_in_one" =
   match pos with
   | Error _ -> assert false
   | Ok pos ->
-    let best_move = S.get_best_move pos 1 0 in
+    let best_move = S.get_best_move pos 1 in
     assert (T.equal_move best_move @@ T.mk_move T.G4 T.G5)
 ;;
 
@@ -100,7 +100,7 @@ let%test_unit "white_checkmate_in_two" =
   match pos with
   | Error _ -> assert false
   | Ok pos ->
-    let best_move = S.get_best_move pos 3 0 in
+    let best_move = S.get_best_move pos 3 in
     assert (T.equal_move best_move @@ T.mk_move T.D5 T.F7)
 ;;
 
@@ -109,7 +109,7 @@ let%test_unit "white_checkmate_in_two" =
   match pos with
   | Error _ -> assert false
   | Ok pos ->
-    let best_move = S.get_best_move pos 3 0 in
+    let best_move = S.get_best_move pos 3 in
     assert (T.equal_move best_move @@ T.mk_move T.D5 T.F7)
 ;;
 
@@ -118,7 +118,7 @@ let%test_unit "white_checkmate_in_two_v2" =
   match pos with
   | Error _ -> assert false
   | Ok pos ->
-    let best_move = S.get_best_move pos 3 0 in
+    let best_move = S.get_best_move pos 3 in
     assert (T.equal_move best_move @@ T.mk_move T.E1 T.D2)
 ;;
 
@@ -127,7 +127,7 @@ let%test_unit "black mate in two" =
   match pos with
   | Error _ -> assert false
   | Ok pos ->
-    let best_move = S.get_best_move pos 3 0 in
+    let best_move = S.get_best_move pos 3 in
     assert (T.equal_move best_move @@ T.mk_move T.F1 T.D1)
 ;;
 
@@ -136,7 +136,7 @@ let%test_unit "white mate in three (hard)" =
   match pos with
   | Error _ -> assert false
   | Ok pos ->
-    let best_move = S.get_best_move pos 5 0 in
+    let best_move = S.get_best_move pos 5 in
     assert (T.equal_move best_move @@ T.mk_move T.F6 T.A1)
 ;;
 
@@ -145,6 +145,6 @@ let%test_unit "black mate in three" =
   match pos with
   | Error _ -> assert false
   | Ok pos ->
-    let best_move = S.get_best_move pos 5 0 in
+    let best_move = S.get_best_move pos 5 in
     assert (T.equal_move best_move @@ T.mk_move T.F5 T.F7)
 ;;

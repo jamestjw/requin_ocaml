@@ -2024,6 +2024,11 @@ module Position = struct
     else Error "Invalid FEN format"
   ;;
 
+  let from_start_pos =
+    from_fen "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
+    |> Stdlib.Result.get_ok
+  ;;
+
   let is_in_check pos = BB.bb_not_zero @@ checkers pos
 end
 

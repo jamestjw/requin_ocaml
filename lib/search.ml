@@ -193,7 +193,7 @@ let rec pvSearch
         score))
 ;;
 
-let get_best_move (pos : P.t) max_depth ply : T.move =
+let get_best_move (pos : P.t) max_depth : T.move =
   let rec iterative_deepening pool curr_depth moves tt =
     if curr_depth < max_depth
     then
@@ -209,7 +209,7 @@ let get_best_move (pos : P.t) max_depth ply : T.move =
                   initial_alpha
                   initial_beta
                   (P.is_white_to_move pos)
-                  (ply + 1)
+                  (P.game_ply pos + 1)
                   [ move ]
                   ~may_prune:(not @@ P.is_capture pos move)
                   ~tt
