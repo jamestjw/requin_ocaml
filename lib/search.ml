@@ -91,7 +91,7 @@ let rec pvSearch
           (* TODO: Check if we are at a Pv node before returning this *)
           Some tt_entry.value
         | true, TT.BOUND_LOWER when tt_entry.value >= beta -> Some tt_entry.value
-        | true, TT.BOUND_UPPER when tt_entry.value < alpha -> Some tt_entry.value
+        | true, TT.BOUND_UPPER when tt_entry.value <= alpha -> Some tt_entry.value
         | _, _ -> None
       in
       (match score, tt_entry.bound with
