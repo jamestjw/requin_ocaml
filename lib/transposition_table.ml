@@ -24,7 +24,7 @@ let bound_contains b1 b2 =
 ;;
 
 type entry =
-  { key : UInt32.t
+  { key : UInt64.t
   ; depth : int
   ; bound : bound
   ; move : Types.move
@@ -34,7 +34,7 @@ type entry =
   }
 
 let empty_entry =
-  { key = UInt32.zero
+  { key = UInt64.zero
   ; depth = 0
   ; bound = BOUND_NONE
   ; move = Types.none_move
@@ -71,9 +71,8 @@ let clear { data; _ } =
 ;;
 
 let probe ({ data; _ } as tt) key =
-  let entry_key = UInt64.to_uint32 key in
   let idx = cluster_idx tt key in
-  Array.find (Array.get data idx) ~f:(fun entry -> UInt32.equal entry_key entry.key)
+  Array.find (Array.get data idx) ~f:(fun entry -> UInt64.equal key entry.key)
 ;;
 
 (* Stores data to the TT and returns the entry that was saved *)
@@ -86,7 +85,7 @@ let store
       ~value
       ~eval_value
   =
-  let entry_key = UInt64.to_uint32 key in
+  let entry_key = key in
   let cluster = Array.get data @@ cluster_idx tt key in
   let rec find_set_idx i (m, best) =
     if i < cluster_size
@@ -96,7 +95,7 @@ let store
       in
       (* Entry is either empty, or we found an old entry that we should
          update *)
-      if UInt32.(equal key zero || equal key entry_key)
+      if UInt64.(equal key zero || equal key entry_key)
       then
         (* If the new move is none, then we preserve the old move *)
         if Types.equal_move m Types.none_move then tt_move, i else m, i
