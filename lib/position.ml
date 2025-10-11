@@ -667,6 +667,9 @@ module Position = struct
     (* Some sanity checks,
        1. Moved piece is our colour
        2. There is exactly one king of our colour on the board *)
+    (* TODO: Can I add compile time constant for debugging? *)
+    (* if moved_piece pos m |> Option.is_none *)
+    (* then Stdlib.Printf.printf "move %s pos:\n%s\n" (Types.show_move m) (show pos); *)
     assert (Types.equal_colour us @@ Types.color_of_piece @@ moved_piece_exn pos m);
     assert (
       Types.equal_piece

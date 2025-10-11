@@ -24,6 +24,11 @@ let rec pvSearch
           ~tt
           ~is_null_window
   =
+  (* TODO: Can I add compile time constant for debugging? *)
+  (* Stdlib.print_endline *)
+  (* @@ String.concat ~sep:" " *)
+  (* @@ List.rev *)
+  (* @@ List.map ~f:T.show_move history; *)
   let search move alpha beta ~is_null_window =
     -1
     * pvSearch
