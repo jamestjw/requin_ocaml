@@ -78,7 +78,7 @@ let probe ({ data; _ } as tt) key =
 
 (* Stores data to the TT and returns the entry that was saved *)
 let store
-      ({ data; size; generation = tt_generation; _ } as tt)
+      ({ data; generation = tt_generation; _ } as tt)
       ~key
       ~m
       ~depth
@@ -89,7 +89,7 @@ let store
   let entry_key = UInt64.to_uint32 key in
   let cluster = Array.get data @@ cluster_idx tt key in
   let rec find_set_idx i (m, best) =
-    if i < size
+    if i < cluster_size
     then (
       let { key; move = tt_move; generation = generation'; bound; depth; _ } =
         Array.get cluster i
