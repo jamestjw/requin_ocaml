@@ -1,10 +1,12 @@
-FROM ocaml/opam:debian-11-ocaml-4.14 AS ocaml-builder
+FROM ocaml/opam:debian-11-ocaml-5.1 AS ocaml-builder
 
 RUN opam install -y dune && opam clean -a
 
 WORKDIR /work
 
 COPY . .
+
+RUN opam exec -- opam install . --deps-only --with-test
 
 RUN opam exec -- dune build @install --profile=release
 
