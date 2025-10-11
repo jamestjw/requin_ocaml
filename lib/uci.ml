@@ -18,6 +18,8 @@ let send_response msg =
 let handle_uci () =
   send_response "id name requin";
   send_response "id author James Tan";
+  send_response "option name Move Overhead type spin default 30 min 0 max 1000";
+  send_response "option name Threads type spin default 1 min 1 max 8";
   send_response "uciok"
 ;;
 
@@ -84,6 +86,42 @@ let handle_position state args =
   { state with pos }
 ;;
 
+let handle_setoption state args =
+  let rec parse_option current_name current_value = function
+    | [] ->
+      (match current_name with
+       | Some "Move Overhead" ->
+         (* You could store current_value in state if you wanted,
+           e.g., state.move_overhead = Some (int_of_string current_value) *)
+         ()
+       | Some "Threads" -> ()
+       | Some _ ->
+         (* Other options, ignore for now *)
+         ()
+       | None -> ())
+    | "name" :: name_parts ->
+      (* Found "name", so gather all parts until "value" *)
+      let rec get_name_and_value_parts name_acc = function
+        | [] -> name_acc, [] (* No value found, error or end *)
+        | "value" :: value_parts -> name_acc, value_parts
+        | part :: rest -> get_name_and_value_parts (name_acc ^ " " ^ part) rest
+      in
+      let name_str, value_parts =
+        get_name_and_value_parts (List.hd_exn name_parts) (List.tl_exn name_parts)
+      in
+      (match value_parts with
+       | v :: rest -> parse_option (Some name_str) (Some v) rest
+       | [] -> parse_option (Some name_str) None [])
+    | _ :: rest ->
+      parse_option
+        current_name
+        current_value
+        rest (* Should not happen with well-formed UCI *)
+  in
+  parse_option None None args;
+  state
+;;
+
 let handle_go { pos; max_depth } args =
   let rec parse_args config args =
     match args with
@@ -112,9 +150,7 @@ let handle_line state line =
   | "go" :: args ->
     handle_go state args;
     state
-  | "setoption" :: _ ->
-    (* TODO: Implement setoption to change settings like max_depth *)
-    state
+  | "setoption" :: args -> handle_setoption state args
   | "quit" :: _ -> Stdlib.exit 0
   | _ ->
     (* Silently ignore unknown commands as per UCI spec *)
