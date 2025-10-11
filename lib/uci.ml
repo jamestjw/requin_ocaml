@@ -8,6 +8,8 @@ type t =
   ; max_depth : int
   }
 
+type go_config = { max_depth : int }
+
 let send_response msg =
   Stdlib.print_endline msg;
   Stdlib.flush Stdlib.stdout
@@ -82,8 +84,51 @@ let handle_position state args =
   { state with pos }
 ;;
 
-let handle_go { pos; max_depth } _args =
-  (* TODO: handle the arguments *)
-  let best_move = S.get_best_move pos max_depth in
+let handle_go { pos; max_depth } args =
+  let rec parse_args config args =
+    match args with
+    (* TODO: handle other arguments *)
+    | "depth" :: depth :: rest ->
+      parse_args { max_depth = Stdlib.int_of_string depth } rest
+    | _ :: rest -> parse_args config rest
+    | _ -> config
+  in
+  let go_config = parse_args { max_depth } args in
+  let best_move = S.get_best_move pos go_config.max_depth in
   send_response (Printf.sprintf "bestmove %s" (T.show_move best_move))
+;;
+
+let handle_line state line =
+  let parts = String.split line ~on:' ' in
+  match parts with
+  | "uci" :: _ ->
+    handle_uci ();
+    state
+  | "isready" :: _ ->
+    handle_isready ();
+    state
+  | "ucinewgame" :: _ -> handle_ucinewgame state
+  | "position" :: args -> handle_position state args
+  | "go" :: args ->
+    handle_go state args;
+    state
+  | "setoption" :: _ ->
+    (* TODO: Implement setoption to change settings like max_depth *)
+    state
+  | "quit" :: _ -> Stdlib.exit 0
+  | _ ->
+    (* Silently ignore unknown commands as per UCI spec *)
+    state
+;;
+
+let run () =
+  let initial_state = { pos = P.from_start_pos; max_depth = 5 } in
+  let rec loop state =
+    match Stdlib.read_line () with
+    | line ->
+      let new_state = handle_line state line in
+      loop new_state
+    | exception End_of_file -> Stdlib.exit 0
+  in
+  loop initial_state
 ;;
