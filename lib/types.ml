@@ -59,6 +59,14 @@ module Types = struct
     | WHITE_OOO | BLACK_OOO -> false
   ;;
 
+  let mk_castling_right ~color ~is_kingside =
+    match color, is_kingside with
+    | WHITE, true -> WHITE_OO
+    | WHITE, false -> WHITE_OOO
+    | BLACK, true -> BLACK_OO
+    | BLACK, false -> BLACK_OOO
+  ;;
+
   (* Value represents a search value. The values used in search are always
    * supposed to be in the range (-value_none| value_none] and should not
    * exceed this range. *)
