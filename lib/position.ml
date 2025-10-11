@@ -1193,7 +1193,7 @@ module Position = struct
                 assert (Option.is_none @@ piece_on pos dst);
                 assert (
                   Types.equal_piece
-                    (piece_on_exn pos capture_sq)
+                    (piece_on_exn pos res)
                     (Types.mk_piece them Types.PAWN));
                 res
               | _ -> capture_sq
@@ -2022,6 +2022,11 @@ module Position = struct
       assert (pos_is_ok pos);
       Ok pos)
     else Error "Invalid FEN format"
+  ;;
+
+  let from_start_pos =
+    from_fen "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
+    |> Stdlib.Result.get_ok
   ;;
 
   let is_in_check pos = BB.bb_not_zero @@ checkers pos
