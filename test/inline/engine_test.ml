@@ -148,3 +148,9 @@ let%test_unit "black mate in three" =
     let best_move = S.get_best_move pos 5 in
     assert (T.equal_move best_move @@ T.mk_move T.F5 T.F7)
 ;;
+
+let%test_unit "can search start position" =
+  let pos = P.from_start_pos in
+  let _ = S.get_best_move pos 5 in
+  assert true
+;;

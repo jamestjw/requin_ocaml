@@ -668,12 +668,12 @@ module Types = struct
     Int.shift_right data 14 |> move_type_of_enum |> Stdlib.Option.get
   ;;
 
-  let get_ppt { data; _ } =
-    match Int.shift_right data 12 |> Int.bit_and 0b11 with
-    | 0 -> Some KNIGHT
-    | 1 -> Some BISHOP
-    | 2 -> Some ROOK
-    | 3 -> Some QUEEN
+  let get_ppt ({ data; _ } as m) =
+    match get_move_type m, Int.shift_right data 12 |> Int.bit_and 0b11 with
+    | PROMOTION, 0 -> Some KNIGHT
+    | PROMOTION, 1 -> Some BISHOP
+    | PROMOTION, 2 -> Some ROOK
+    | PROMOTION, 3 -> Some QUEEN
     | _ -> None
   ;;
 
@@ -685,8 +685,8 @@ module Types = struct
     else
       Printf.sprintf
         "%s%s%s"
-        (show_square @@ move_src move)
-        (show_square @@ move_dst move)
+        (String.lowercase @@ show_square @@ move_src move)
+        (String.lowercase @@ show_square @@ move_dst move)
         (get_ppt move |> Option.fold ~init:"" ~f:(fun _ pt -> piece_type_to_algebraic pt))
   ;;
 
@@ -862,17 +862,23 @@ let%test_unit "test_normal_pawn_move" =
   [%test_result: Types.move_type] ~expect:Types.NORMAL (Types.get_move_type move)
 ;;
 
-(* TODO: This return KNIGHT since we don't have enough bits to represent
-   the absence of a ppt *)
-(* [%test_result: Types.piece_type option] ~expect:None (Types.get_ppt move) *)
-
-let%test_unit "test_construct_and_deconstruct_move" =
+let%test_unit "test_construct_and_deconstruct_move_not_a_promotion" =
   let move =
     Types.mk_move ~ppt:(Some Types.QUEEN) Types.E4 Types.E5 ~move_type:Types.EN_PASSANT
   in
   [%test_result: Types.square] ~expect:Types.E5 (Types.move_src move);
   [%test_result: Types.square] ~expect:Types.E4 (Types.move_dst move);
   [%test_result: Types.move_type] ~expect:Types.EN_PASSANT (Types.get_move_type move);
+  [%test_result: Types.piece_type option] ~expect:None (Types.get_ppt move)
+;;
+
+let%test_unit "test_construct_and_deconstruct_move_is_promotion" =
+  let move =
+    Types.mk_move ~ppt:(Some Types.QUEEN) Types.C8 Types.B7 ~move_type:Types.PROMOTION
+  in
+  [%test_result: Types.square] ~expect:Types.B7 (Types.move_src move);
+  [%test_result: Types.square] ~expect:Types.C8 (Types.move_dst move);
+  [%test_result: Types.move_type] ~expect:Types.PROMOTION (Types.get_move_type move);
   [%test_result: Types.piece_type option] ~expect:(Some Types.QUEEN) (Types.get_ppt move)
 ;;
 

@@ -1193,7 +1193,7 @@ module Position = struct
                 assert (Option.is_none @@ piece_on pos dst);
                 assert (
                   Types.equal_piece
-                    (piece_on_exn pos capture_sq)
+                    (piece_on_exn pos res)
                     (Types.mk_piece them Types.PAWN));
                 res
               | _ -> capture_sq
