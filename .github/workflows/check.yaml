@@ -26,7 +26,7 @@ jobs:
       - name: "Run tests"
         run: opam exec -- dune runtest
 
-  lint-fmt:
+  lint:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout tree
