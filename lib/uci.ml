@@ -51,18 +51,27 @@ let handle_position state args =
           Ok (Some ppt))
         else Ok None
       in
-      let%bind move_type =
+      let%bind move_type, to_sq =
         match P.piece_on pos from_sq, P.piece_on pos to_sq with
         | None, _ ->
           Error
             (Printf.sprintf "missing piece on source square %s" (T.show_square from_sq))
         | (Some W_PAWN | Some B_PAWN), None
           when not @@ T.equal_file (T.file_of_sq from_sq) (T.file_of_sq to_sq) ->
-          Ok T.EN_PASSANT
+          Ok (T.EN_PASSANT, to_sq)
         | (Some W_KING | Some B_KING), None when T.distance_by_file from_sq to_sq > 1 ->
-          Ok T.CASTLING
-        | (Some W_PAWN | Some B_PAWN), _ when Option.is_some ppt -> Ok T.PROMOTION
-        | _ -> Ok T.NORMAL
+          (* We encode castling as the king capturing its own rook, so here we need to
+             find the rook. If the rook is on the right of the king, we are castling
+             kingside. *)
+          let is_kingside = T.compare_square to_sq from_sq > 0 in
+          let to_sq =
+            T.mk_castling_right ~color:(P.side_to_move pos) ~is_kingside
+            |> P.castling_rook_square pos
+            |> Stdlib.Option.get
+          in
+          Ok (T.CASTLING, to_sq)
+        | (Some W_PAWN | Some B_PAWN), _ when Option.is_some ppt -> Ok (T.PROMOTION, to_sq)
+        | _ -> Ok (T.NORMAL, to_sq)
       in
       return @@ T.mk_move ~move_type ~ppt to_sq from_sq
   in
