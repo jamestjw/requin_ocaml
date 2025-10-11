@@ -421,6 +421,8 @@ module Types = struct
          Utils.(0 -- 7)
   ;;
 
+  let rank_of_int i = rank_of_enum (i - 1)
+
   (* TODO: This needs to do more checks, e.g. H4 + EAST should be invalid *)
   let sq_plus_dir sq dir = square_to_enum sq + direction_to_enum dir |> square_of_enum
 
@@ -701,7 +703,7 @@ module Types = struct
       match String.to_list sq with
       | [ file; rank ] ->
         let%bind rank = Stdlib.int_of_string_opt @@ String.make 1 rank in
-        let%bind rank = rank_of_enum rank in
+        let%bind rank = rank_of_int rank in
         let%bind file = file_of_ch file in
         return @@ mk_square ~file ~rank
       | _ -> None

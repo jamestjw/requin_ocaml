@@ -53,7 +53,9 @@ let handle_position state args =
       in
       let%bind move_type =
         match P.piece_on pos from_sq, P.piece_on pos to_sq with
-        | None, _ -> Error "missing piece on source square"
+        | None, _ ->
+          Error
+            (Printf.sprintf "missing piece on source square %s" (T.show_square from_sq))
         | (Some W_PAWN | Some B_PAWN), None
           when not @@ T.equal_file (T.file_of_sq from_sq) (T.file_of_sq to_sq) ->
           Ok T.EN_PASSANT
@@ -75,8 +77,10 @@ let handle_position state args =
   let pos =
     match args with
     | "startpos" :: "moves" :: moves -> parse_and_make_moves P.from_start_pos moves
+    | "startpos" :: [] -> P.from_start_pos
     | "fen" :: fen :: "moves" :: moves ->
       parse_and_make_moves (P.from_fen fen |> Stdlib.Result.get_ok) moves
+    | [ "fen"; fen ] -> P.from_fen fen |> Stdlib.Result.get_ok
     | _ ->
       Printf.failwithf
         "invalid arguments to `position`: %s"
