@@ -12,31 +12,26 @@ env:
   IMAGE_NAME: ${{ github.repository }} # e.g., your_github_user/requin-ocaml-engine
 
 jobs:
-  build-and-push:
+  # --- Build AMD64 Image ---
+  build-amd64:
     runs-on: ubuntu-latest
     permissions:
       contents: read
       packages: write
+    outputs:
+      image_tag_amd64: ${{ steps.meta.outputs.tags }} # Output the list of tags used for amd64
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v3
-
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
-        with:
-          platforms: all # Enable emulation for all architectures
-
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
+        uses: docker/setup-buildx-action@v2
       - name: Log in to GitHub Container Registry
         uses: docker/login-action@v2
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-
       - name: Extract Docker metadata (tags, labels)
         id: meta
         uses: docker/metadata-action@v4
@@ -44,21 +39,113 @@ jobs:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           tags: |
             type=schedule
-            type=ref,event=branch
-            type=ref,event=pr
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
-            type=raw,value=latest,enable={{is_default_branch}}
-            type=sha
-
-      - name: Build and push Docker image
-        uses: docker/build-push-action@v5
+            type=ref,event=branch,enable=false # Don't add direct branch tags here
+            type=semver,pattern={{version}}-amd64
+            type=raw,value=latest-amd64,enable={{is_default_branch}}
+            type=sha,suffix=-amd64
+      - name: Build and push AMD64 Docker image
+        uses: docker/build-push-action@v4
         with:
           context: .
-          # platforms: linux/amd64,linux/arm64
+          platforms: linux/amd64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  # --- Build ARM64 Image ---
+  build-arm64:
+    runs-on: ubuntu-latest-arm64 # <--- Native ARM64 runner
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      image_tag_arm64: ${{ steps.meta.outputs.tags }} # Output the list of tags used for arm64
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v2
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v2
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.TOKEN }}
+      - name: Extract Docker metadata (tags, labels)
+        id: meta
+        uses: docker/metadata-action@v4
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=schedule
+            type=ref,event=branch,enable=false
+            type=semver,pattern={{version}}-arm64
+            type=raw,value=latest-arm64,enable={{is_default_branch}}
+            type=sha,suffix=-arm64
+      - name: Build and push ARM64 Docker image
+        uses: docker/build-push-action@v4
+        with:
+          context: .
           platforms: linux/arm64
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+  # --- Create Multi-Arch Manifest List ---
+  create-manifest:
+    runs-on: ubuntu-latest
+    needs: [build-amd64, build-arm64] # Depends on both architecture-specific builds
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v2
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract Docker metadata (base tags for manifest)
+        id: meta_base
+        uses: docker/metadata-action@v4
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=schedule
+            type=ref,event=branch
+            type=semver,pattern={{version}}
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=sha
+
+      - name: Create and push manifest list
+        run: |
+          # Get the base tags (e.g., 'v1.0.0', 'latest')
+          BASE_TAGS="${{ steps.meta_base.outputs.tags }}"
+          echo "Base tags for manifest: $BASE_TAGS"
+
+          # Get the architecturally specific tags from the build jobs
+          AMD64_TAGS="${{ needs.build-amd64.outputs.image_tag_amd64 }}"
+          ARM64_TAGS="${{ needs.build-arm64.outputs.image_tag_arm64 }}"
+
+          # Loop through each base tag and create a manifest
+          # This assumes a 1:1 mapping of base tags to arch-specific tags (e.g., v1.0.0 -> v1.0.0-amd64, v1.0.0-arm64)
+          echo "$BASE_TAGS" | jq -r '.[]' | while read TAG; do
+            # Construct the full image names including registry and repo
+            IMAGE_BASE="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:$TAG"
+            IMAGE_AMD64="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:$TAG-amd64"
+            IMAGE_ARM64="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:$TAG-arm64"
+
+            echo "Creating manifest for $IMAGE_BASE"
+            docker manifest create $IMAGE_BASE $IMAGE_AMD64 $IMAGE_ARM64
+            docker manifest push $IMAGE_BASE
+          done
+        env:
+          # Required for jq for parsing JSON output from metadata action
+          GITHUB_OUTPUT: ${{ github.output }}
