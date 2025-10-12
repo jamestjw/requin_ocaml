@@ -33,4 +33,4 @@ RUN git checkout 5a9bb63199d5b8f118a1963d6a49a6bf06a4e57a
 
 RUN python3 -m pip install --no-cache-dir -r requirements.txt
 
-CMD python3 lichess-bot.py --disable_auto_logging --config /lichess-bot/config/config.yml
+CMD python3 lichess-bot.py --disable_auto_logging --config /lichess-bot/config/config.yml -u -v
