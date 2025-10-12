@@ -2,6 +2,7 @@ open Base
 module P = Position.Position
 module M = Movegen.MoveGen
 module T = Types.Types
+module K = Killer
 module TT = Transposition_table
 module Eval = Evaluation
 module Task = Domainslib.Task
@@ -17,7 +18,7 @@ let generate_moves pos = M.generate_legal pos
 
 let rec pvSearch
           pos
-          curr_depth
+          curr_ply
           max_depth
           alpha
           beta
@@ -26,6 +27,7 @@ let rec pvSearch
           history
           ~may_prune
           ~tt
+          ~killers
           ~is_null_window
           ~is_pv
   =
@@ -37,7 +39,7 @@ let rec pvSearch
   (* Whether or not we should attempt null move pruning *)
 
   (* Attempt null move pruning if we can, return an optional score if we get a cutoff *)
-  let remaining_depth = max_depth - curr_depth in
+  let remaining_depth = max_depth - curr_ply in
   let maybe_attempt_nmp pos =
     let may_do_nmp =
       (* TODO: check for zugzwang, we could do something simple like check if there
@@ -53,7 +55,7 @@ let rec pvSearch
         -1
         * pvSearch
             (P.do_null_move pos)
-            (curr_depth + null_move_reduction)
+            (curr_ply + null_move_reduction)
             max_depth
             (-beta)
             (-beta + 1)
@@ -62,6 +64,7 @@ let rec pvSearch
             (T.null_move :: history)
             ~may_prune
             ~tt
+            ~killers
             ~is_null_window
             ~is_pv:false
       in
@@ -72,7 +75,7 @@ let rec pvSearch
     -1
     * pvSearch
         (P.do_move' pos move)
-        (curr_depth + 1)
+        (curr_ply + 1)
         max_depth
         (-beta)
         (-alpha)
@@ -81,6 +84,7 @@ let rec pvSearch
         (move :: history)
         ~may_prune:(not @@ P.is_capture pos move)
         ~tt
+        ~killers
         ~is_null_window
         ~is_pv
   in
@@ -103,7 +107,9 @@ let rec pvSearch
     in
     if score >= beta
     then (
-      (* TODO: store killer moves *)
+      if (not (P.is_capture pos move)) && not (T.is_promotion move)
+      then K.add_killer killers ply move;
+      (* <--- ADDED *)
       ignore
       @@ TT.store
            tt
@@ -150,7 +156,7 @@ let rec pvSearch
   (* This takes into account the 50 move rule and threehold repetition *)
   if P.is_draw pos ply
   then T.value_draw
-  else if (not is_in_check) && (remaining_depth <= 0 || curr_depth = T.max_ply)
+  else if (not is_in_check) && (remaining_depth <= 0 || curr_ply = T.max_ply)
   then
     (* TODO: quiescence search *)
     eval_value
@@ -183,22 +189,27 @@ let rec pvSearch
          if List.is_empty legal_moves
          then
            (* Either draw or mate *)
-           if P.is_in_check pos then -(T.value_mate - curr_depth) else T.value_draw
+           if P.is_in_check pos then -(T.value_mate - curr_ply) else T.value_draw
          else (
            (* Move ordering *)
-           (* 1. Good captures *)
-           (* 2. Bad captures *)
-           (* 3. Non-captures *)
+           (* 1. Good captures - score 10 *)
+           (* 2. Killer moves - 5 *)
+           (* 3. Bad captures - -10 *)
+           (* 4. Non-captures - -infinity *)
+           let killer_moves = K.get_killers killers ply in
            let sorted_moves =
              List.map legal_moves ~f:(fun m ->
+               let is_capture = P.is_capture pos m in
                let score =
-                 if P.is_capture pos m
+                 if is_capture
                  then
                    if P.see_ge pos m 1
                    then
                      (* TODO: maybe some captures are better than others? *)
                      10
-                   else 0
+                   else -10
+                 else if List.find killer_moves ~f:(T.equal_move m) |> Option.is_some
+                 then 5
                  else Int.min_value
                in
                m, score)
@@ -242,7 +253,7 @@ let rec pvSearch
 ;;
 
 let get_best_move (pos : P.t) max_depth : T.move =
-  let rec iterative_deepening pool curr_depth moves tt =
+  let rec iterative_deepening pool curr_depth moves tt killers =
     if curr_depth < max_depth
     then
       (let promises =
@@ -261,6 +272,7 @@ let get_best_move (pos : P.t) max_depth : T.move =
                   [ move ]
                   ~may_prune:(not @@ P.is_capture pos move)
                   ~tt
+                  ~killers
                   ~is_null_window:false
                   ~is_pv:(i = 0) )))
        in
@@ -289,13 +301,16 @@ let get_best_move (pos : P.t) max_depth : T.move =
        let sorted_moves = sorted_moves |> List.map ~f:fst in
        iterative_deepening pool (curr_depth + 1) sorted_moves)
         tt
+        killers
     else List.hd_exn moves
   in
   let moves = generate_moves pos in
   if List.is_empty moves then failwith "no legal moves";
   if not (max_depth > 0) then failwith "depth needs to be > 0";
   let pool = Task.setup_pool ~num_domains:parallel () in
-  let res = Task.run pool (fun _ -> iterative_deepening pool 0 moves (TT.mk ())) in
+  let res =
+    Task.run pool (fun _ -> iterative_deepening pool 0 moves (TT.mk ()) (Killer.mk ()))
+  in
   Task.teardown_pool pool;
   res
 ;;
