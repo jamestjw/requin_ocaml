@@ -27,6 +27,7 @@ let rec pvSearch
           ~may_prune
           ~tt
           ~is_null_window
+          ~is_pv
   =
   (* TODO: Can I add compile time constant for debugging? *)
   (* Stdlib.print_endline *)
@@ -41,9 +42,8 @@ let rec pvSearch
     let may_do_nmp =
       (* TODO: check for zugzwang, we could do something simple like check if there
        are only kings and pawns *)
-      remaining_depth >= null_move_reduction && not (P.is_in_check pos)
+      remaining_depth >= null_move_reduction && (not (P.is_in_check pos)) && not is_pv
       (* Add the following conditions
-      - !is_pv_node, we need full evaluation of the PV, don't risk it
       - !is_cut_node, we are likely to get a cut off in, don't risk it
       - !(static eval > beta + 50 centipawns), because the position is so good, we are likely to get a cutoff anyway *)
     in
@@ -63,11 +63,12 @@ let rec pvSearch
             ~may_prune
             ~tt
             ~is_null_window
+            ~is_pv:false
       in
       if score >= beta then Some score else None)
     else None
   in
-  let search move alpha beta ~is_null_window =
+  let search move alpha beta ~is_null_window ~is_pv =
     -1
     * pvSearch
         (P.do_move' pos move)
@@ -81,6 +82,7 @@ let rec pvSearch
         ~may_prune:(not @@ P.is_capture pos move)
         ~tt
         ~is_null_window
+        ~is_pv
   in
   let offset = if is_white then -1 else 1 in
   let eval_value = offset * Eval.evaluate pos () in
@@ -88,14 +90,15 @@ let rec pvSearch
   let do_move (alpha, best_move, is_first_move) move =
     let score =
       if is_first_move
-      then search move alpha beta ~is_null_window:false
+      then search move alpha beta ~is_null_window:false ~is_pv
       else (
         (* Search with null window, i.e. with [alpha , alpha + 1] *)
-        let score = search move alpha (alpha + 1) ~is_null_window:true in
+        (* Since this isn't the first move, by definition it isn't in the PV *)
+        let score = search move alpha (alpha + 1) ~is_null_window:true ~is_pv:false in
         if score > alpha && beta - alpha > 1
         then
           (* re-search with full window *)
-          search move alpha beta ~is_null_window:false
+          search move alpha beta ~is_null_window:false ~is_pv:false
         else score)
     in
     if score >= beta
@@ -243,7 +246,7 @@ let get_best_move (pos : P.t) max_depth : T.move =
     if curr_depth < max_depth
     then
       (let promises =
-         List.map moves ~f:(fun move ->
+         List.mapi moves ~f:(fun i move ->
            (* TODO: alpha beta from one move should be used to tighten subsequent searches *)
            Task.async pool (fun _ ->
              ( move
@@ -258,7 +261,8 @@ let get_best_move (pos : P.t) max_depth : T.move =
                   [ move ]
                   ~may_prune:(not @@ P.is_capture pos move)
                   ~tt
-                  ~is_null_window:false )))
+                  ~is_null_window:false
+                  ~is_pv:(i = 0) )))
        in
        let move_scores = List.map ~f:(Task.await pool) promises in
        (* Single core search for easier debugging *)
