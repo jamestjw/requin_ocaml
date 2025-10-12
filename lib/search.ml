@@ -7,6 +7,10 @@ module Eval = Evaluation
 module Task = Domainslib.Task
 
 let parallel = 8
+
+(* Also known as R *)
+(* TODO: make this dynamic *)
+let null_move_reduction = 3
 let initial_alpha = -T.value_mate - 1
 let initial_beta = T.value_mate + 1
 let generate_moves pos = M.generate_legal pos
@@ -29,6 +33,40 @@ let rec pvSearch
   (* @@ String.concat ~sep:" " *)
   (* @@ List.rev *)
   (* @@ List.map ~f:T.show_move history; *)
+  (* Whether or not we should attempt null move pruning *)
+
+  (* Attempt null move pruning if we can, return an optional score if we get a cutoff *)
+  let remaining_depth = max_depth - curr_depth in
+  let maybe_attempt_nmp pos =
+    let may_do_nmp =
+      (* TODO: check for zugzwang, we could do something simple like check if there
+       are only kings and pawns *)
+      remaining_depth >= null_move_reduction && not (P.is_in_check pos)
+      (* Add the following conditions
+      - !is_pv_node, we need full evaluation of the PV, don't risk it
+      - !is_cut_node, we are likely to get a cut off in, don't risk it
+      - !(static eval > beta + 50 centipawns), because the position is so good, we are likely to get a cutoff anyway *)
+    in
+    if may_do_nmp
+    then (
+      let score =
+        -1
+        * pvSearch
+            (P.do_null_move pos)
+            (curr_depth + null_move_reduction)
+            max_depth
+            (-beta)
+            (-beta + 1)
+            (not is_white)
+            (ply + 1)
+            (T.null_move :: history)
+            ~may_prune
+            ~tt
+            ~is_null_window
+      in
+      if score >= beta then Some score else None)
+    else None
+  in
   let search move alpha beta ~is_null_window =
     -1
     * pvSearch
@@ -44,7 +82,6 @@ let rec pvSearch
         ~tt
         ~is_null_window
   in
-  let remaining_depth = max_depth - curr_depth in
   let offset = if is_white then -1 else 1 in
   let eval_value = offset * Eval.evaluate pos () in
   let is_in_check = P.is_in_check pos in
@@ -136,66 +173,69 @@ let rec pvSearch
     match process_tt_entry remaining_depth tt_entry alpha with
     | Some score, _, _ -> score
     | _, alpha, found_hash_move ->
-      let legal_moves = M.generate_legal pos in
-      if List.is_empty legal_moves
-      then
-        (* Either draw or mate *)
-        if P.is_in_check pos then -(T.value_mate - curr_depth) else T.value_draw
-      else (
-        (* Move ordering *)
-        (* 1. Good captures *)
-        (* 2. Bad captures *)
-        (* 3. Non-captures *)
-        let sorted_moves =
-          List.map legal_moves ~f:(fun m ->
-            let score =
-              if P.is_capture pos m
-              then
-                if P.see_ge pos m 1
-                then
-                  (* TODO: maybe some captures are better than others? *)
-                  10
-                else 0
-              else Int.min_value
-            in
-            m, score)
-          |> List.sort ~compare:(fun (_, v1) (_, v2) -> compare v2 v1)
-          |> List.map ~f:fst
-        in
-        let score, best_move, is_cut =
-          List.fold_until
-            sorted_moves
-            (* If we didn't a hash move, then we are processing the first move here *)
-            ~init:(alpha, None, not found_hash_move)
-            ~f:do_move (* No cutoff if we finish *)
-            ~finish:(fun (a, b, _) -> a, b, false)
-        in
-        if not is_cut
-        then (
-          match best_move, is_null_window with
-          | Some m, false ->
-            ignore
-            @@ TT.store
-                 tt
-                 ~key:pos.st.key
-                 ~m
-                 ~depth:remaining_depth
-                 ~eval_value
-                 ~value:score
-                 ~bound:TT.BOUND_EXACT
-          | None, _ ->
-            (* It's fine to set an upper bound even if we are doing a null move search *)
-            ignore
-            @@ TT.store
-                 tt
-                 ~key:pos.st.key
-                 ~m:T.none_move
-                 ~depth:remaining_depth
-                 ~eval_value
-                 ~value:score
-                 ~bound:TT.BOUND_UPPER
-          | _ -> ());
-        score))
+      (match maybe_attempt_nmp pos with
+       | Some score -> score
+       | _ ->
+         let legal_moves = M.generate_legal pos in
+         if List.is_empty legal_moves
+         then
+           (* Either draw or mate *)
+           if P.is_in_check pos then -(T.value_mate - curr_depth) else T.value_draw
+         else (
+           (* Move ordering *)
+           (* 1. Good captures *)
+           (* 2. Bad captures *)
+           (* 3. Non-captures *)
+           let sorted_moves =
+             List.map legal_moves ~f:(fun m ->
+               let score =
+                 if P.is_capture pos m
+                 then
+                   if P.see_ge pos m 1
+                   then
+                     (* TODO: maybe some captures are better than others? *)
+                     10
+                   else 0
+                 else Int.min_value
+               in
+               m, score)
+             |> List.sort ~compare:(fun (_, v1) (_, v2) -> compare v2 v1)
+             |> List.map ~f:fst
+           in
+           let score, best_move, is_cut =
+             List.fold_until
+               sorted_moves
+               (* If we didn't a hash move, then we are processing the first move here *)
+               ~init:(alpha, None, not found_hash_move)
+               ~f:do_move (* No cutoff if we finish *)
+               ~finish:(fun (a, b, _) -> a, b, false)
+           in
+           if not is_cut
+           then (
+             match best_move, is_null_window with
+             | Some m, false ->
+               ignore
+               @@ TT.store
+                    tt
+                    ~key:pos.st.key
+                    ~m
+                    ~depth:remaining_depth
+                    ~eval_value
+                    ~value:score
+                    ~bound:TT.BOUND_EXACT
+             | None, _ ->
+               (* It's fine to set an upper bound even if we are doing a null move search *)
+               ignore
+               @@ TT.store
+                    tt
+                    ~key:pos.st.key
+                    ~m:T.none_move
+                    ~depth:remaining_depth
+                    ~eval_value
+                    ~value:score
+                    ~bound:TT.BOUND_UPPER
+             | _ -> ());
+           score)))
 ;;
 
 let get_best_move (pos : P.t) max_depth : T.move =
