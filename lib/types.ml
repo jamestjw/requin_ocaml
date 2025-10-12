@@ -687,6 +687,12 @@ module Types = struct
     | _ -> None
   ;;
 
+  let is_promotion m =
+    match get_move_type m with
+    | PROMOTION -> true
+    | _ -> false
+  ;;
+
   let show_move move =
     if move_is_none move
     then "<none>"
