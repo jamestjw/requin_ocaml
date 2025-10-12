@@ -6,7 +6,7 @@ WORKDIR /work
 
 COPY . .
 
-RUN opam exec -- opam install . --deps-only --with-test
+RUN opam exec -- opam install . --deps-only
 
 RUN opam exec -- dune build @install --profile=release
 
