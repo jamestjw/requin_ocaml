@@ -130,7 +130,7 @@ module Types = struct
     | B_ROOK
     | B_QUEEN
     | B_KING
-  [@@deriving enum, eq, show, ord, sexp]
+  [@@deriving enum, eq, show, ord, sexp, hash]
 
   let all_pieces =
     [ W_PAWN
@@ -231,7 +231,7 @@ module Types = struct
     | F8
     | G8
     | H8
-  [@@deriving enum, sexp, ord, eq, show { with_path = false }]
+  [@@deriving enum, sexp, ord, eq, hash, show { with_path = false }]
 
   let all_squares =
     [ A1

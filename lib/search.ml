@@ -6,6 +6,7 @@ module K = Killer
 module TT = Transposition_table
 module Eval = Evaluation
 module Task = Domainslib.Task
+module History = History
 
 let parallel = 8
 
@@ -30,6 +31,7 @@ let rec pvSearch
           ~killers
           ~is_null_window
           ~is_pv
+          ~history_tbl
   =
   (* TODO: Can I add compile time constant for debugging? *)
   (* Stdlib.print_endline *)
@@ -67,6 +69,7 @@ let rec pvSearch
             ~killers
             ~is_null_window
             ~is_pv:false
+            ~history_tbl
       in
       if score >= beta then Some score else None)
     else None
@@ -87,6 +90,7 @@ let rec pvSearch
         ~killers
         ~is_null_window
         ~is_pv
+        ~history_tbl
   in
   let offset = if is_white then -1 else 1 in
   let eval_value = offset * Eval.evaluate pos () in
@@ -107,9 +111,10 @@ let rec pvSearch
     in
     if score >= beta
     then (
-      if (not (P.is_capture pos move)) && not (T.is_promotion move)
-      then K.add_killer killers ply move;
-      (* <--- ADDED *)
+      if T.move_is_ok move && not (P.is_capture pos move || T.is_promotion move)
+      then (
+        K.add_killer killers ply move;
+        History.update history_tbl move remaining_depth (P.moved_piece_exn pos move));
       ignore
       @@ TT.store
            tt
@@ -191,11 +196,11 @@ let rec pvSearch
            (* Either draw or mate *)
            if P.is_in_check pos then -(T.value_mate - curr_ply) else T.value_draw
          else (
-           (* Move ordering *)
-           (* 1. Good captures - score 10 *)
-           (* 2. Killer moves - 5 *)
-           (* 3. Bad captures - -10 *)
-           (* 4. Non-captures - -infinity *)
+           (* Move ordering (hash move would already have been tested before move generation) *)
+           (* 1. Good captures - score 2000000 *)
+           (* 2. Killer moves - 1500000  *)
+           (* 4. Quiet moves - from history *)
+           (* 3. Bad captures - -2000000 *)
            let killer_moves = K.get_killers killers ply in
            let sorted_moves =
              List.map legal_moves ~f:(fun m ->
@@ -206,11 +211,13 @@ let rec pvSearch
                    if P.see_ge pos m 1
                    then
                      (* TODO: maybe some captures are better than others? *)
-                     10
-                   else -10
+                     2000000
+                   else -2000000 (* Bad captures last *)
                  else if List.find killer_moves ~f:(T.equal_move m) |> Option.is_some
-                 then 5
-                 else Int.min_value
+                 then 1500000
+                 else
+                   (* History score for quiet moves *)
+                   History.get history_tbl m (P.moved_piece_exn pos m)
                in
                m, score)
              |> List.sort ~compare:(fun (_, v1) (_, v2) -> compare v2 v1)
@@ -253,10 +260,11 @@ let rec pvSearch
 ;;
 
 let get_best_move (pos : P.t) max_depth : T.move =
-  let rec iterative_deepening pool curr_depth moves tt killers =
+  let rec iterative_deepening pool curr_depth moves tt killers history_tbl =
     if curr_depth < max_depth
     then
-      (let promises =
+      (History.decay history_tbl;
+       let promises =
          List.mapi moves ~f:(fun i move ->
            (* TODO: alpha beta from one move should be used to tighten subsequent searches *)
            Task.async pool (fun _ ->
@@ -274,6 +282,7 @@ let get_best_move (pos : P.t) max_depth : T.move =
                   ~tt
                   ~killers
                   ~is_null_window:false
+                  ~history_tbl
                   ~is_pv:(i = 0) )))
        in
        let move_scores = List.map ~f:(Task.await pool) promises in
@@ -302,6 +311,7 @@ let get_best_move (pos : P.t) max_depth : T.move =
        iterative_deepening pool (curr_depth + 1) sorted_moves)
         tt
         killers
+        history_tbl
     else List.hd_exn moves
   in
   let moves = generate_moves pos in
@@ -309,7 +319,8 @@ let get_best_move (pos : P.t) max_depth : T.move =
   if not (max_depth > 0) then failwith "depth needs to be > 0";
   let pool = Task.setup_pool ~num_domains:parallel () in
   let res =
-    Task.run pool (fun _ -> iterative_deepening pool 0 moves (TT.mk ()) (Killer.mk ()))
+    Task.run pool (fun _ ->
+      iterative_deepening pool 0 moves (TT.mk ()) (Killer.mk ()) (History.mk ()))
   in
   Task.teardown_pool pool;
   res
