@@ -10,7 +10,7 @@ RUN opam exec -- opam install . --deps-only --with-test
 
 RUN opam exec -- dune build @install --profile=release
 
-FROM lichessbotdevs/lichess-bot:latest
+FROM lichessbotdevs/lichess-bot:2025.10.11.1
 
 # Use the same directory as the base lichess-bot image
 WORKDIR /lichess-bot
@@ -18,3 +18,5 @@ WORKDIR /lichess-bot
 # Copy the compiled OCaml executable from the ocaml-builder stage
 # The path below assumes dune builds to _build/default/bin/main.exe
 COPY --from=ocaml-builder /work/_build/default/bin/main.exe /app/engines/requin
+
+CMD python3 lichess-bot.py --disable_auto_logging --config /lichess-bot/config/config.yml
