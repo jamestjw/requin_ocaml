@@ -15,7 +15,81 @@ let parallel = 8
 let null_move_reduction = 3
 let initial_alpha = -T.value_mate - 1
 let initial_beta = T.value_mate + 1
+let delta_pruning_threshold = T.queen_value
 let generate_moves pos = M.generate_legal pos
+
+let rec qSearch pos alpha beta is_white ply ~tt ~killers ~history_tbl =
+  let in_check = P.is_in_check pos in
+  let offset = if is_white then -1 else 1 in
+  let stand_pat = offset * Eval.evaluate pos () in
+  (* Stand-pat score *)
+  (* If we can stand pat and it's already good enough, prune *)
+  if stand_pat >= beta && not in_check
+  then stand_pat
+  (* else if *)
+  (*   stand_pat < alpha - delta_pruning_threshold && not (P.is_in_check pos) *)
+  (*   (* Skip the node if giving the side to move an extra queen doesn't help *) *)
+  (* then alpha *)
+  else (
+    (* Update alpha with stand-pat *)
+    let alpha = max alpha stand_pat in
+    let legal_moves = M.generate_legal pos in
+    (* Filter moves for QS:
+       - If in check, consider ALL legal moves (to get out of check).
+       - Otherwise, only consider captures and promotions.
+    *)
+    let moves_to_search =
+      if in_check
+      then legal_moves (* In check, all legal moves are forcing *)
+      else
+        List.filter legal_moves ~f:(fun move ->
+          P.is_capture pos move || T.is_promotion move)
+    in
+    (* Quiescence Move Ordering: Captures/Promotions first (using SEE if possible) *)
+    let sorted_qs_moves =
+      List.map moves_to_search ~f:(fun m ->
+        let score =
+          if P.is_capture pos m
+          then
+            if P.see_ge pos m 1
+            then
+              (* TODO: calculate the actual value of the exchange *)
+              10
+            else -10
+          else if T.is_promotion m
+          then T.queen_value
+          else 0 (* Other moves (only if in check) *)
+        in
+        m, score)
+      |> List.sort ~compare:(fun (_, v1) (_, v2) -> compare v2 v1)
+      |> List.map ~f:fst
+    in
+    let rec find_best_qscore current_alpha moves =
+      match moves with
+      | [] -> current_alpha
+      | move :: rest ->
+        let score =
+          -1
+          * qSearch
+              (P.do_move' pos move)
+              (-beta)
+              (-current_alpha)
+              (not is_white)
+              (ply + 1)
+              ~tt
+              ~killers
+              ~history_tbl
+        in
+        if score >= beta
+        then score
+        else (
+          let new_alpha = max current_alpha score in
+          find_best_qscore new_alpha rest)
+    in
+    if in_check && List.is_empty legal_moves
+    then -(T.value_mate - ply)
+    else find_best_qscore alpha sorted_qs_moves)
+;;
 
 let rec pvSearch
           pos
@@ -162,9 +236,7 @@ let rec pvSearch
   if P.is_draw pos ply
   then T.value_draw
   else if (not is_in_check) && (remaining_depth <= 0 || curr_ply = T.max_ply)
-  then
-    (* TODO: quiescence search *)
-    eval_value
+  then qSearch pos alpha beta is_white curr_ply ~tt ~killers ~history_tbl
   else if
     (not is_in_check)
     && remaining_depth = 1
