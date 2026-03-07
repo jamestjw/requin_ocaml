@@ -145,7 +145,19 @@ let handle_go { pos; max_depth } args =
     | _ -> config
   in
   let go_config = parse_args { max_depth } args in
-  let best_move = S.get_best_move pos go_config.max_depth in
+  let on_info info =
+    let ({ depth; score; nodes; nps; tthit; cut } : S.info) = info in
+    send_response
+      (Printf.sprintf
+         "info depth %d score cp %d nodes %d nps %d tthit %d cut %d"
+         depth
+         score
+         nodes
+         nps
+         tthit
+         cut)
+  in
+  let best_move = S.get_best_move ~on_info pos go_config.max_depth in
   send_response (Printf.sprintf "bestmove %s" (T.show_move best_move))
 ;;
 

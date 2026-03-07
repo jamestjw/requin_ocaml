@@ -17,6 +17,65 @@ let initial_alpha = -T.value_mate - 1
 let initial_beta = T.value_mate + 1
 let generate_moves pos = M.generate_legal pos
 
+type stats =
+  { mutable nodes : int
+  ; mutable cutoffs : int
+  ; mutable fail_high : int
+  ; mutable fail_low : int
+  ; mutable tt_probes : int
+  ; mutable tt_hits : int
+  ; mutable tt_exact : int
+  ; mutable tt_lower : int
+  ; mutable tt_upper : int
+  ; mutable tt_cutoffs : int
+  ; mutable first_move_cutoffs : int
+  ; mutable cutoff_index_sum : int
+  ; mutable cutoff_count : int
+  }
+
+type info =
+  { depth : int
+  ; score : int
+  ; nodes : int
+  ; nps : int
+  ; tthit : int
+  ; cut : int
+  }
+
+let mk_stats () =
+  { nodes = 0
+  ; cutoffs = 0
+  ; fail_high = 0
+  ; fail_low = 0
+  ; tt_probes = 0
+  ; tt_hits = 0
+  ; tt_exact = 0
+  ; tt_lower = 0
+  ; tt_upper = 0
+  ; tt_cutoffs = 0
+  ; first_move_cutoffs = 0
+  ; cutoff_index_sum = 0
+  ; cutoff_count = 0
+  }
+;;
+
+let merge_stats (acc : stats) (s : stats) =
+  acc.nodes <- acc.nodes + s.nodes;
+  acc.cutoffs <- acc.cutoffs + s.cutoffs;
+  acc.fail_high <- acc.fail_high + s.fail_high;
+  acc.fail_low <- acc.fail_low + s.fail_low;
+  acc.tt_probes <- acc.tt_probes + s.tt_probes;
+  acc.tt_hits <- acc.tt_hits + s.tt_hits;
+  acc.tt_exact <- acc.tt_exact + s.tt_exact;
+  acc.tt_lower <- acc.tt_lower + s.tt_lower;
+  acc.tt_upper <- acc.tt_upper + s.tt_upper;
+  acc.tt_cutoffs <- acc.tt_cutoffs + s.tt_cutoffs;
+  acc.first_move_cutoffs <- acc.first_move_cutoffs + s.first_move_cutoffs;
+  acc.cutoff_index_sum <- acc.cutoff_index_sum + s.cutoff_index_sum;
+  acc.cutoff_count <- acc.cutoff_count + s.cutoff_count;
+  acc
+;;
+
 let rec pvSearch
           pos
           curr_ply
@@ -26,6 +85,7 @@ let rec pvSearch
           is_white
           ply
           history
+          ~(stats : stats)
           ~may_prune
           ~tt
           ~killers
@@ -33,6 +93,7 @@ let rec pvSearch
           ~is_pv
           ~history_tbl
   =
+  stats.nodes <- stats.nodes + 1;
   (* Mate scores are ply-relative (distance to mate). We normalize when storing
      so TT entries remain comparable across different search plies, and restore
      when reading. *)
@@ -81,6 +142,7 @@ let rec pvSearch
             (not is_white)
             (ply + 1)
             (T.null_move :: history)
+            ~stats
             ~may_prune
             ~tt
             ~killers
@@ -102,6 +164,7 @@ let rec pvSearch
         (not is_white)
         (ply + 1)
         (move :: history)
+        ~stats
         ~may_prune:(not @@ P.is_capture pos move)
         ~tt
         ~killers
@@ -112,7 +175,8 @@ let rec pvSearch
   let offset = if is_white then 1 else -1 in
   let eval_value = offset * Eval.evaluate pos () in
   let is_in_check = P.is_in_check pos in
-  let do_move (alpha, best_move, is_first_move) move =
+  let alpha_orig = alpha in
+  let do_move (alpha, best_move, is_first_move, idx) move =
     let score =
       if is_first_move
       then search move alpha beta ~is_null_window:false ~is_pv
@@ -128,6 +192,11 @@ let rec pvSearch
     in
     if score >= beta
     then (
+      stats.cutoffs <- stats.cutoffs + 1;
+      stats.fail_high <- stats.fail_high + 1;
+      stats.cutoff_index_sum <- stats.cutoff_index_sum + idx;
+      stats.cutoff_count <- stats.cutoff_count + 1;
+      if is_first_move then stats.first_move_cutoffs <- stats.first_move_cutoffs + 1;
       if T.move_is_ok move && not (P.is_capture pos move || T.is_promotion move)
       then (
         K.add_killer killers ply move;
@@ -141,21 +210,30 @@ let rec pvSearch
            ~eval_value
            ~value:(value_to_tt score curr_ply)
            ~bound:TT.BOUND_LOWER;
-      Continue_or_stop.Stop (beta, best_move, true))
+      Continue_or_stop.Stop (beta, best_move, true, idx))
     else if score > alpha
-    then Continue_or_stop.Continue (score, Some move, false)
-    else Continue_or_stop.Continue (alpha, best_move, false)
+    then Continue_or_stop.Continue (score, Some move, false, idx + 1)
+    else Continue_or_stop.Continue (alpha, best_move, false, idx + 1)
   in
-  let do_move' alpha move ~is_first_move =
-    match do_move (alpha, None, is_first_move) move with
-    | Continue_or_stop.Continue (score, m, _) -> score, m, false
-    | Continue_or_stop.Stop (score, m, cut) -> score, m, cut
+  let do_move' alpha move ~is_first_move ~idx =
+    match do_move (alpha, None, is_first_move, idx) move with
+    | Continue_or_stop.Continue (score, m, _, _) -> score, m, false
+    | Continue_or_stop.Stop (score, m, cut, _) -> score, m, cut
   in
   (* Try to get an early exit score from the TT entry, also evaluates the hash
     move if it exists *)
   let process_tt_entry depth (tt_entry : TT.entry option) alpha =
     match tt_entry with
     | Some tt_entry ->
+      stats.tt_hits <- stats.tt_hits + 1;
+      if tt_entry.depth >= depth
+      then (
+        match tt_entry.bound with
+        | TT.BOUND_EXACT -> stats.tt_exact <- stats.tt_exact + 1
+        | TT.BOUND_LOWER -> stats.tt_lower <- stats.tt_lower + 1
+        | TT.BOUND_UPPER -> stats.tt_upper <- stats.tt_upper + 1
+        | TT.BOUND_NONE -> ())
+      else ();
       let tt_value = value_from_tt tt_entry.value curr_ply in
       let score =
         match tt_entry.depth >= depth, tt_entry.bound with
@@ -166,6 +244,9 @@ let rec pvSearch
         | true, TT.BOUND_UPPER when tt_value <= alpha -> Some tt_value
         | _, _ -> None
       in
+      (match score with
+       | Some _ -> stats.tt_cutoffs <- stats.tt_cutoffs + 1
+       | None -> ());
       let alpha =
         match tt_entry.depth >= depth, tt_entry.bound with
         | true, TT.BOUND_LOWER -> Int.max alpha tt_value
@@ -176,7 +257,7 @@ let rec pvSearch
        | _, (TT.BOUND_EXACT | TT.BOUND_LOWER)
          when T.move_not_none tt_entry.move && P.legal pos tt_entry.move ->
          (* Search hash move *)
-         let score, _, is_cut = do_move' alpha tt_entry.move ~is_first_move:true in
+         let score, _, is_cut = do_move' alpha tt_entry.move ~is_first_move:true ~idx:0 in
          if is_cut then Some score, alpha, true else None, score, true
        | _, _ -> score, alpha, false)
     | None -> None, alpha, false
@@ -206,6 +287,7 @@ let rec pvSearch
     (* Same as above *)
     alpha
   else (
+    stats.tt_probes <- stats.tt_probes + 1;
     let tt_entry = TT.probe tt pos.st.key in
     match process_tt_entry remaining_depth tt_entry alpha with
     | Some score, _, _ -> score
@@ -246,14 +328,16 @@ let rec pvSearch
              |> List.sort ~compare:(fun (_, v1) (_, v2) -> compare v2 v1)
              |> List.map ~f:fst
            in
-           let score, best_move, is_cut =
+           let score, best_move, is_cut, _ =
              List.fold_until
                sorted_moves
                (* If we didn't a hash move, then we are processing the first move here *)
-               ~init:(alpha, None, not found_hash_move)
+               ~init:(alpha, None, not found_hash_move, 0)
                ~f:do_move (* No cutoff if we finish *)
-               ~finish:(fun (a, b, _) -> a, b, false)
+               ~finish:(fun (a, b, _, idx) -> a, b, false, idx)
            in
+           if (not is_cut) && score <= alpha_orig
+           then stats.fail_low <- stats.fail_low + 1;
            if not is_cut
            then (
              match best_move, is_null_window with
@@ -282,15 +366,17 @@ let rec pvSearch
            score)))
 ;;
 
-let get_best_move (pos : P.t) max_depth : T.move =
+let get_best_move ?(on_info = fun (_ : info) -> ()) (pos : P.t) max_depth : T.move =
   let rec iterative_deepening pool curr_depth moves tt killers history_tbl =
     if curr_depth < max_depth
     then
       (History.decay history_tbl;
+       let start_time = Stdlib.Sys.time () in
        let promises =
          List.mapi moves ~f:(fun i move ->
            (* TODO: alpha beta from one move should be used to tighten subsequent searches *)
            Task.async pool (fun _ ->
+             let stats = mk_stats () in
              ( move
              , -pvSearch
                   (P.do_move' pos move)
@@ -301,12 +387,14 @@ let get_best_move (pos : P.t) max_depth : T.move =
                   (not (P.is_white_to_move pos))
                   (P.game_ply pos + 1)
                   [ move ]
+                  ~stats
                   ~may_prune:(not @@ P.is_capture pos move)
                   ~tt
                   ~killers
                   ~is_null_window:false
                   ~history_tbl
-                  ~is_pv:(i = 0) )))
+                  ~is_pv:(i = 0)
+             , stats )))
        in
        let move_scores = List.map ~f:(Task.await pool) promises in
        (* Single core search for easier debugging *)
@@ -327,10 +415,33 @@ let get_best_move (pos : P.t) max_depth : T.move =
        (*           ~is_null_window:false )) *)
        (*  in *)
        (* TODO: add transposition table entry *)
-       let sorted_moves =
-         List.stable_sort move_scores ~compare:(fun (_, s1) (_, s2) -> compare s2 s1)
+       let stats =
+         List.fold move_scores ~init:(mk_stats ()) ~f:(fun acc (_, _, s) ->
+           merge_stats acc s)
        in
-       let sorted_moves = sorted_moves |> List.map ~f:fst in
+       let sorted_moves =
+         List.stable_sort move_scores ~compare:(fun (_, s1, _) (_, s2, _) ->
+           compare s2 s1)
+       in
+       let best_score =
+         let _, score, _ = List.hd_exn sorted_moves in
+         score
+       in
+       let elapsed = Float.max 0.001 (Stdlib.Sys.time () -. start_time) in
+       let nps = Int.of_float (Float.of_int stats.nodes /. elapsed) in
+       let tthit =
+         if stats.tt_probes = 0 then 0 else stats.tt_hits * 100 / stats.tt_probes
+       in
+       let cut = if stats.nodes = 0 then 0 else stats.cutoffs * 100 / stats.nodes in
+       on_info
+         { depth = curr_depth + 1
+         ; score = best_score
+         ; nodes = stats.nodes
+         ; nps
+         ; tthit
+         ; cut
+         };
+       let sorted_moves = sorted_moves |> List.map ~f:(fun (m, _, _) -> m) in
        iterative_deepening pool (curr_depth + 1) sorted_moves)
         tt
         killers
