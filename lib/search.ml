@@ -148,6 +148,11 @@ let rec pvSearch
         | true, TT.BOUND_UPPER when tt_entry.value <= alpha -> Some tt_entry.value
         | _, _ -> None
       in
+      let alpha =
+        match tt_entry.depth >= depth, tt_entry.bound with
+        | true, TT.BOUND_LOWER -> Int.max alpha tt_entry.value
+        | _ -> alpha
+      in
       (match score, tt_entry.bound with
        | Some _, _ -> score, alpha, false
        | _, (TT.BOUND_EXACT | TT.BOUND_LOWER)
