@@ -87,9 +87,17 @@ let handle_position state args =
     match args with
     | "startpos" :: "moves" :: moves -> parse_and_make_moves P.from_start_pos moves
     | "startpos" :: [] -> P.from_start_pos
-    | "fen" :: fen :: "moves" :: moves ->
-      parse_and_make_moves (P.from_fen fen |> Stdlib.Result.get_ok) moves
-    | [ "fen"; fen ] -> P.from_fen fen |> Stdlib.Result.get_ok
+    | "fen" :: rest ->
+      let rec split_fen acc = function
+        | "moves" :: moves -> List.rev acc, moves
+        | parts when List.length acc >= 6 -> List.rev acc, parts
+        | part :: parts -> split_fen (part :: acc) parts
+        | [] -> List.rev acc, []
+      in
+      let fen_parts, moves = split_fen [] rest in
+      let fen = String.concat ~sep:" " fen_parts in
+      let pos = P.from_fen fen |> Stdlib.Result.get_ok in
+      if List.is_empty moves then pos else parse_and_make_moves pos moves
     | _ ->
       Printf.failwithf
         "invalid arguments to `position`: %s"
