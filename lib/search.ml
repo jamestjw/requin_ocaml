@@ -15,6 +15,7 @@ let parallel = 8
 let null_move_reduction = 3
 let qsearch_max_depth = 4
 let qsearch_check_depth = 2
+let qsearch_delta_margin = T.queen_value + T.pawn_value
 let initial_alpha = -T.value_mate - 1
 let initial_beta = T.value_mate + 1
 let generate_moves pos = M.generate_legal pos
@@ -120,6 +121,8 @@ let rec qsearch pos alpha beta is_white ply history ~stats ~qdepth =
   in
   if (not in_check) && stand_pat >= beta
   then beta
+  else if (not in_check) && stand_pat + qsearch_delta_margin <= alpha
+  then alpha
   else (
     let allow_checks = qdepth > qsearch_max_depth - qsearch_check_depth in
     let moves =
@@ -136,7 +139,15 @@ let rec qsearch pos alpha beta is_white ply history ~stats ~qdepth =
             (* SEE prune losing captures unless they give check. *)
             let is_good_capture = P.see_ge pos m 1 in
             if is_good_capture || gives_check
-            then Some (m, true, is_good_capture, gives_check)
+            then (
+              let capture_value =
+                match P.piece_on pos (T.move_dst m) with
+                | Some p -> T.piece_value p
+                | None -> 0
+              in
+              if stand_pat + capture_value + qsearch_delta_margin <= alpha
+              then None
+              else Some (m, true, is_good_capture, gives_check))
             else None)
           else if gives_check
           then Some (m, false, false, true)
