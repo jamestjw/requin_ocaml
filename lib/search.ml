@@ -92,7 +92,7 @@ let rec pvSearch
         ~is_pv
         ~history_tbl
   in
-  let offset = if is_white then -1 else 1 in
+  let offset = if is_white then 1 else -1 in
   let eval_value = offset * Eval.evaluate pos () in
   let is_in_check = P.is_in_check pos in
   let do_move (alpha, best_move, is_first_move) move =
@@ -280,7 +280,7 @@ let get_best_move (pos : P.t) max_depth : T.move =
                   curr_depth
                   initial_alpha
                   initial_beta
-                  (P.is_white_to_move pos)
+                  (not (P.is_white_to_move pos))
                   (P.game_ply pos + 1)
                   [ move ]
                   ~may_prune:(not @@ P.is_capture pos move)
