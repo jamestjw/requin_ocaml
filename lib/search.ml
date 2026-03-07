@@ -124,27 +124,33 @@ let rec qsearch pos alpha beta is_white ply history ~stats ~qdepth =
     let allow_checks = qdepth > qsearch_max_depth - qsearch_check_depth in
     let moves =
       if in_check
-      then M.generate_legal pos
+      then List.map (M.generate_legal pos) ~f:(fun m -> m, true, true, false)
       else
         (* TODO: Avoid generate+filter; directly generate captures/checks for qsearch. *)
         M.generate_legal pos
-        |> List.filter ~f:(fun m ->
-          if P.is_capture pos m
-          then true
-          else if allow_checks
-          then P.is_in_check (P.do_move' pos m)
-          else false)
+        |> List.filter_map ~f:(fun m ->
+          let is_capture = P.is_capture pos m in
+          let gives_check = allow_checks && P.gives_check pos m in
+          if is_capture
+          then (
+            (* SEE prune losing captures unless they give check. *)
+            let is_good_capture = P.see_ge pos m 1 in
+            if is_good_capture || gives_check
+            then Some (m, true, is_good_capture, gives_check)
+            else None)
+          else if gives_check
+          then Some (m, false, false, true)
+          else None)
     in
     if List.is_empty moves
     then if in_check then -(T.value_mate - ply) else alpha
     else (
       let sorted_moves =
-        List.map moves ~f:(fun m ->
-          let is_capture = P.is_capture pos m in
+        List.map moves ~f:(fun (m, is_capture, is_good_capture, gives_check) ->
           let score =
             if is_capture
-            then if P.see_ge pos m 1 then 2000000 else -2000000
-            else if allow_checks && P.is_in_check (P.do_move' pos m)
+            then if is_good_capture then 2000000 else -2000000
+            else if gives_check
             then 1000000
             else 0
           in
