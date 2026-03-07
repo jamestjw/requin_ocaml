@@ -13,12 +13,15 @@ let parallel = 8
 (* Also known as R *)
 (* TODO: make this dynamic *)
 let null_move_reduction = 3
+let qsearch_max_depth = 4
+let qsearch_check_depth = 2
 let initial_alpha = -T.value_mate - 1
 let initial_beta = T.value_mate + 1
 let generate_moves pos = M.generate_legal pos
 
 type stats =
   { mutable nodes : int
+  ; mutable qnodes : int
   ; mutable cutoffs : int
   ; mutable fail_high : int
   ; mutable fail_low : int
@@ -54,6 +57,7 @@ type instrumentation =
 
 let mk_stats () =
   { nodes = 0
+  ; qnodes = 0
   ; cutoffs = 0
   ; fail_high = 0
   ; fail_low = 0
@@ -71,6 +75,7 @@ let mk_stats () =
 
 let merge_stats (acc : stats) (s : stats) =
   acc.nodes <- acc.nodes + s.nodes;
+  acc.qnodes <- acc.qnodes + s.qnodes;
   acc.cutoffs <- acc.cutoffs + s.cutoffs;
   acc.fail_high <- acc.fail_high + s.fail_high;
   acc.fail_low <- acc.fail_low + s.fail_low;
@@ -103,6 +108,72 @@ let pv_from_tt (pos : P.t) tt max_len =
       | Some _ -> List.rev acc)
   in
   loop pos [] max_len
+;;
+
+let rec qsearch pos alpha beta is_white ply history ~stats ~qdepth =
+  stats.qnodes <- stats.qnodes + 1;
+  let in_check = P.is_in_check pos in
+  let offset = if is_white then 1 else -1 in
+  let stand_pat = offset * Eval.evaluate pos () in
+  let alpha =
+    if not in_check then if stand_pat > alpha then stand_pat else alpha else alpha
+  in
+  if (not in_check) && stand_pat >= beta
+  then beta
+  else (
+    let allow_checks = qdepth > qsearch_max_depth - qsearch_check_depth in
+    let moves =
+      if in_check
+      then M.generate_legal pos
+      else
+        (* TODO: Avoid generate+filter; directly generate captures/checks for qsearch. *)
+        M.generate_legal pos
+        |> List.filter ~f:(fun m ->
+          if P.is_capture pos m
+          then true
+          else if allow_checks
+          then P.is_in_check (P.do_move' pos m)
+          else false)
+    in
+    if List.is_empty moves
+    then if in_check then -(T.value_mate - ply) else alpha
+    else (
+      let sorted_moves =
+        List.map moves ~f:(fun m ->
+          let is_capture = P.is_capture pos m in
+          let score =
+            if is_capture
+            then if P.see_ge pos m 1 then 2000000 else -2000000
+            else if allow_checks && P.is_in_check (P.do_move' pos m)
+            then 1000000
+            else 0
+          in
+          m, score)
+        |> List.sort ~compare:(fun (_, v1) (_, v2) -> compare v2 v1)
+        |> List.map ~f:fst
+      in
+      let rec loop alpha = function
+        | [] -> alpha
+        | m :: rest ->
+          let score =
+            -qsearch
+               (P.do_move' pos m)
+               (-beta)
+               (-alpha)
+               (not is_white)
+               (ply + 1)
+               (m :: history)
+               ~stats
+               ~qdepth:(Int.max 0 (qdepth - 1))
+          in
+          if score >= beta
+          then (
+            stats.cutoffs <- stats.cutoffs + 1;
+            stats.fail_high <- stats.fail_high + 1;
+            beta)
+          else loop (Int.max alpha score) rest
+      in
+      loop alpha sorted_moves))
 ;;
 
 let rec pvSearch
@@ -294,10 +365,10 @@ let rec pvSearch
   (* This takes into account the 50 move rule and threehold repetition *)
   if P.is_draw pos ply
   then T.value_draw
-  else if (not is_in_check) && (remaining_depth <= 0 || curr_ply = T.max_ply)
-  then
-    (* TODO: quiescence search *)
-    eval_value
+  else if curr_ply = T.max_ply
+  then eval_value
+  else if remaining_depth <= 0
+  then qsearch pos alpha beta is_white ply history ~stats ~qdepth:qsearch_max_depth
   else if
     (not is_in_check)
     && remaining_depth = 1
@@ -459,15 +530,16 @@ let get_best_move ?(instrumentation = default_instrumentation) (pos : P.t) max_d
          m, score
        in
        let elapsed = Float.max 0.001 (Stdlib.Sys.time () -. start_time) in
-       let nps = Int.of_float (Float.of_int stats.nodes /. elapsed) in
+       let total_nodes = stats.nodes + stats.qnodes in
+       let nps = Int.of_float (Float.of_int total_nodes /. elapsed) in
        let tthit =
          if stats.tt_probes = 0 then 0 else stats.tt_hits * 100 / stats.tt_probes
        in
-       let cut = if stats.nodes = 0 then 0 else stats.cutoffs * 100 / stats.nodes in
+       let cut = if total_nodes = 0 then 0 else stats.cutoffs * 100 / total_nodes in
        instrumentation.on_info
          { depth = curr_depth + 1
          ; score = best_score
-         ; nodes = stats.nodes
+         ; nodes = total_nodes
          ; nps
          ; tthit
          ; cut
