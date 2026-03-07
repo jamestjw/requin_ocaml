@@ -16,6 +16,9 @@ let null_move_reduction = 3
 let qsearch_max_depth = 4
 let qsearch_check_depth = 2
 let qsearch_delta_margin = T.queen_value + T.pawn_value
+let lmr_depth_threshold = 3
+let lmr_move_threshold = 3
+let lmr_reduction = 1
 let initial_alpha = -T.value_mate - 1
 let initial_beta = T.value_mate + 1
 let generate_moves pos = M.generate_legal pos
@@ -270,11 +273,11 @@ let rec pvSearch
       if score >= beta then Some score else None)
     else None
   in
-  let search move alpha beta ~is_null_window ~is_pv =
+  let search_with_ply move alpha beta extra_ply ~is_null_window ~is_pv =
     -1
     * pvSearch
         (P.do_move' pos move)
-        (curr_ply + 1)
+        (curr_ply + 1 + extra_ply)
         max_depth
         (-beta)
         (-alpha)
@@ -289,6 +292,9 @@ let rec pvSearch
         ~is_pv
         ~history_tbl
   in
+  let search move alpha beta ~is_null_window ~is_pv =
+    search_with_ply move alpha beta 0 ~is_null_window ~is_pv
+  in
   let offset = if is_white then 1 else -1 in
   let eval_value = offset * Eval.evaluate pos () in
   let is_in_check = P.is_in_check pos in
@@ -300,7 +306,26 @@ let rec pvSearch
       else (
         (* Search with null window, i.e. with [alpha , alpha + 1] *)
         (* Since this isn't the first move, by definition it isn't in the PV *)
-        let score = search move alpha (alpha + 1) ~is_null_window:true ~is_pv:false in
+        let can_lmr =
+          may_prune
+          && (not is_pv)
+          && (not is_in_check)
+          && remaining_depth >= lmr_depth_threshold
+          && idx >= lmr_move_threshold
+          && not (P.is_capture pos move || T.is_promotion move)
+        in
+        let score =
+          if can_lmr
+          then
+            search_with_ply
+              move
+              alpha
+              (alpha + 1)
+              lmr_reduction
+              ~is_null_window:true
+              ~is_pv:false
+          else search move alpha (alpha + 1) ~is_null_window:true ~is_pv:false
+        in
         if score > alpha && beta - alpha > 1
         then
           (* re-search with full window *)
