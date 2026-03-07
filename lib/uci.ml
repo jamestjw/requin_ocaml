@@ -145,19 +145,28 @@ let handle_go { pos; max_depth } args =
     | _ -> config
   in
   let go_config = parse_args { max_depth } args in
-  let on_info info =
-    let ({ depth; score; nodes; nps; tthit; cut } : S.info) = info in
-    send_response
-      (Printf.sprintf
-         "info depth %d score cp %d nodes %d nps %d tthit %d cut %d"
-         depth
-         score
-         nodes
-         nps
-         tthit
-         cut)
+  let last_info : S.info option ref = ref None in
+  let on_info info = last_info := Some info in
+  let on_pv pv_info =
+    let { S.depth; S.pv } = pv_info in
+    let pv_str = String.concat ~sep:" " @@ List.map pv ~f:T.show_move in
+    match !last_info with
+    | Some { depth = info_depth; score; nodes; nps; tthit; cut } when info_depth = depth
+      ->
+      send_response
+        (Printf.sprintf
+           "info depth %d score cp %d nodes %d nps %d tthit %d cut %d pv %s"
+           depth
+           score
+           nodes
+           nps
+           tthit
+           cut
+           pv_str)
+    | _ -> send_response (Printf.sprintf "info depth %d pv %s" depth pv_str)
   in
-  let best_move = S.get_best_move ~on_info pos go_config.max_depth in
+  let instrumentation = { S.on_info; S.on_pv } in
+  let best_move = S.get_best_move ~instrumentation pos go_config.max_depth in
   send_response (Printf.sprintf "bestmove %s" (T.show_move best_move))
 ;;
 

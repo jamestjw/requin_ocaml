@@ -42,6 +42,16 @@ type info =
   ; cut : int
   }
 
+type pv_info =
+  { depth : int
+  ; pv : T.move list
+  }
+
+type instrumentation =
+  { on_info : info -> unit
+  ; on_pv : pv_info -> unit
+  }
+
 let mk_stats () =
   { nodes = 0
   ; cutoffs = 0
@@ -74,6 +84,25 @@ let merge_stats (acc : stats) (s : stats) =
   acc.cutoff_index_sum <- acc.cutoff_index_sum + s.cutoff_index_sum;
   acc.cutoff_count <- acc.cutoff_count + s.cutoff_count;
   acc
+;;
+
+let default_instrumentation =
+  { on_info = (fun (_ : info) -> ()); on_pv = (fun (_ : pv_info) -> ()) }
+;;
+
+let pv_from_tt (pos : P.t) tt max_len =
+  (* TODO: Build PV from search return instead of TT. *)
+  let rec loop pos acc remaining =
+    if remaining <= 0
+    then List.rev acc
+    else (
+      match TT.probe tt (P.key pos) with
+      | None -> List.rev acc
+      | Some entry when T.move_not_none entry.move && P.legal pos entry.move ->
+        loop (P.do_move' pos entry.move) (entry.move :: acc) (remaining - 1)
+      | Some _ -> List.rev acc)
+  in
+  loop pos [] max_len
 ;;
 
 let rec pvSearch
@@ -204,7 +233,7 @@ let rec pvSearch
       ignore
       @@ TT.store
            tt
-           ~key:pos.st.key
+           ~key:(P.key pos)
            ~m:move
            ~depth:remaining_depth
            ~eval_value
@@ -288,7 +317,7 @@ let rec pvSearch
     alpha
   else (
     stats.tt_probes <- stats.tt_probes + 1;
-    let tt_entry = TT.probe tt pos.st.key in
+    let tt_entry = TT.probe tt (P.key pos) in
     match process_tt_entry remaining_depth tt_entry alpha with
     | Some score, _, _ -> score
     | _, alpha, found_hash_move ->
@@ -345,7 +374,7 @@ let rec pvSearch
                ignore
                @@ TT.store
                     tt
-                    ~key:pos.st.key
+                    ~key:(P.key pos)
                     ~m
                     ~depth:remaining_depth
                     ~eval_value
@@ -356,7 +385,7 @@ let rec pvSearch
                ignore
                @@ TT.store
                     tt
-                    ~key:pos.st.key
+                    ~key:(P.key pos)
                     ~m:T.none_move
                     ~depth:remaining_depth
                     ~eval_value
@@ -366,7 +395,9 @@ let rec pvSearch
            score)))
 ;;
 
-let get_best_move ?(on_info = fun (_ : info) -> ()) (pos : P.t) max_depth : T.move =
+let get_best_move ?(instrumentation = default_instrumentation) (pos : P.t) max_depth
+  : T.move
+  =
   let rec iterative_deepening pool curr_depth moves tt killers history_tbl =
     if curr_depth < max_depth
     then
@@ -423,9 +454,9 @@ let get_best_move ?(on_info = fun (_ : info) -> ()) (pos : P.t) max_depth : T.mo
          List.stable_sort move_scores ~compare:(fun (_, s1, _) (_, s2, _) ->
            compare s2 s1)
        in
-       let best_score =
-         let _, score, _ = List.hd_exn sorted_moves in
-         score
+       let best_move, best_score =
+         let m, score, _ = List.hd_exn sorted_moves in
+         m, score
        in
        let elapsed = Float.max 0.001 (Stdlib.Sys.time () -. start_time) in
        let nps = Int.of_float (Float.of_int stats.nodes /. elapsed) in
@@ -433,7 +464,7 @@ let get_best_move ?(on_info = fun (_ : info) -> ()) (pos : P.t) max_depth : T.mo
          if stats.tt_probes = 0 then 0 else stats.tt_hits * 100 / stats.tt_probes
        in
        let cut = if stats.nodes = 0 then 0 else stats.cutoffs * 100 / stats.nodes in
-       on_info
+       instrumentation.on_info
          { depth = curr_depth + 1
          ; score = best_score
          ; nodes = stats.nodes
@@ -441,6 +472,10 @@ let get_best_move ?(on_info = fun (_ : info) -> ()) (pos : P.t) max_depth : T.mo
          ; tthit
          ; cut
          };
+       (* Seed PV with the root best move since TT entries at the root can be
+           missing (e.g., upper-bound stores use none_move). *)
+       let pv = best_move :: pv_from_tt (P.do_move' pos best_move) tt curr_depth in
+       instrumentation.on_pv { depth = curr_depth + 1; pv };
        let sorted_moves = sorted_moves |> List.map ~f:(fun (m, _, _) -> m) in
        iterative_deepening pool (curr_depth + 1) sorted_moves)
         tt
