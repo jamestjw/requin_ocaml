@@ -19,6 +19,9 @@ let qsearch_delta_margin = T.queen_value + T.pawn_value
 let lmr_depth_threshold = 3
 let lmr_move_threshold = 3
 let lmr_reduction = 1
+
+(* TODO: Tune aspiration window size based on fail rate. *)
+let aspiration_window = 100
 let initial_alpha = -T.value_mate - 1
 let initial_beta = T.value_mate + 1
 let generate_moves pos = M.generate_legal pos
@@ -511,90 +514,106 @@ let rec pvSearch
 let get_best_move ?(instrumentation = default_instrumentation) (pos : P.t) max_depth
   : T.move
   =
-  let rec iterative_deepening pool curr_depth moves tt killers history_tbl =
+  let rec iterative_deepening pool curr_depth moves tt killers history_tbl prev_score =
     if curr_depth < max_depth
-    then
-      (History.decay history_tbl;
-       let start_time = Stdlib.Sys.time () in
-       let promises =
-         List.mapi moves ~f:(fun i move ->
-           (* TODO: alpha beta from one move should be used to tighten subsequent searches *)
-           Task.async pool (fun _ ->
-             let stats = mk_stats () in
-             ( move
-             , -pvSearch
-                  (P.do_move' pos move)
-                  0
-                  curr_depth
-                  initial_alpha
-                  initial_beta
-                  (not (P.is_white_to_move pos))
-                  (P.game_ply pos + 1)
-                  [ move ]
-                  ~stats
-                  ~may_prune:(not @@ P.is_capture pos move)
-                  ~tt
-                  ~killers
-                  ~is_null_window:false
-                  ~history_tbl
-                  ~is_pv:(i = 0)
-             , stats )))
-       in
-       let move_scores = List.map ~f:(Task.await pool) promises in
-       (* Single core search for easier debugging *)
-       (* (let move_scores = *)
-       (*    List.map moves ~f:(fun move -> *)
-       (*      ( move *)
-       (*      , -pvSearch *)
-       (*           (P.do_move' pos move) *)
-       (*           0 *)
-       (*           curr_depth *)
-       (*           initial_alpha *)
-       (*           initial_beta *)
-       (*           (P.is_white_to_move pos) *)
-       (*           (P.game_ply pos + 1) *)
-       (*           [ move ] *)
-       (*           ~may_prune:(not @@ P.is_capture pos move) *)
-       (*           ~tt *)
-       (*           ~is_null_window:false )) *)
-       (*  in *)
-       (* TODO: add transposition table entry *)
-       let stats =
-         List.fold move_scores ~init:(mk_stats ()) ~f:(fun acc (_, _, s) ->
-           merge_stats acc s)
-       in
-       let sorted_moves =
-         List.stable_sort move_scores ~compare:(fun (_, s1, _) (_, s2, _) ->
-           compare s2 s1)
-       in
-       let best_move, best_score =
-         let m, score, _ = List.hd_exn sorted_moves in
-         m, score
-       in
-       let elapsed = Float.max 0.001 (Stdlib.Sys.time () -. start_time) in
-       let total_nodes = stats.nodes + stats.qnodes in
-       let nps = Int.of_float (Float.of_int total_nodes /. elapsed) in
-       let tthit =
-         if stats.tt_probes = 0 then 0 else stats.tt_hits * 100 / stats.tt_probes
-       in
-       let cut = if total_nodes = 0 then 0 else stats.cutoffs * 100 / total_nodes in
-       instrumentation.on_info
-         { depth = curr_depth + 1
-         ; score = best_score
-         ; nodes = total_nodes
-         ; nps
-         ; tthit
-         ; cut
-         };
-       (* Seed PV with the root best move since TT entries at the root can be
+    then (
+      History.decay history_tbl;
+      let start_time = Stdlib.Sys.time () in
+      let alpha, beta =
+        match prev_score with
+        | None -> initial_alpha, initial_beta
+        | Some score ->
+          let a = score - aspiration_window in
+          let b = score + aspiration_window in
+          a, b
+      in
+      let promises =
+        List.mapi moves ~f:(fun i move ->
+          (* TODO: alpha beta from one move should be used to tighten subsequent searches *)
+          Task.async pool (fun _ ->
+            let stats = mk_stats () in
+            ( move
+            , -pvSearch
+                 (P.do_move' pos move)
+                 0
+                 curr_depth
+                 alpha
+                 beta
+                 (not (P.is_white_to_move pos))
+                 (P.game_ply pos + 1)
+                 [ move ]
+                 ~stats
+                 ~may_prune:(not @@ P.is_capture pos move)
+                 ~tt
+                 ~killers
+                 ~is_null_window:false
+                 ~history_tbl
+                 ~is_pv:(i = 0)
+            , stats )))
+      in
+      let move_scores = List.map ~f:(Task.await pool) promises in
+      (* Single core search for easier debugging *)
+      (* (let move_scores = *)
+      (*    List.map moves ~f:(fun move -> *)
+      (*      ( move *)
+      (*      , -pvSearch *)
+      (*           (P.do_move' pos move) *)
+      (*           0 *)
+      (*           curr_depth *)
+      (*           initial_alpha *)
+      (*           initial_beta *)
+      (*           (P.is_white_to_move pos) *)
+      (*           (P.game_ply pos + 1) *)
+      (*           [ move ] *)
+      (*           ~may_prune:(not @@ P.is_capture pos move) *)
+      (*           ~tt *)
+      (*           ~is_null_window:false )) *)
+      (*  in *)
+      (* TODO: add transposition table entry *)
+      let stats =
+        List.fold move_scores ~init:(mk_stats ()) ~f:(fun acc (_, _, s) ->
+          merge_stats acc s)
+      in
+      let sorted_moves =
+        List.stable_sort move_scores ~compare:(fun (_, s1, _) (_, s2, _) -> compare s2 s1)
+      in
+      let best_move, best_score =
+        let m, score, _ = List.hd_exn sorted_moves in
+        m, score
+      in
+      if Option.is_some prev_score && (best_score <= alpha || best_score >= beta)
+      then
+        (* Aspiration window failed; re-search with full window. *)
+        iterative_deepening pool curr_depth moves tt killers history_tbl None
+      else (
+        let elapsed = Float.max 0.001 (Stdlib.Sys.time () -. start_time) in
+        let total_nodes = stats.nodes + stats.qnodes in
+        let nps = Int.of_float (Float.of_int total_nodes /. elapsed) in
+        let tthit =
+          if stats.tt_probes = 0 then 0 else stats.tt_hits * 100 / stats.tt_probes
+        in
+        let cut = if total_nodes = 0 then 0 else stats.cutoffs * 100 / total_nodes in
+        instrumentation.on_info
+          { depth = curr_depth + 1
+          ; score = best_score
+          ; nodes = total_nodes
+          ; nps
+          ; tthit
+          ; cut
+          };
+        (* Seed PV with the root best move since TT entries at the root can be
            missing (e.g., upper-bound stores use none_move). *)
-       let pv = best_move :: pv_from_tt (P.do_move' pos best_move) tt curr_depth in
-       instrumentation.on_pv { depth = curr_depth + 1; pv };
-       let sorted_moves = sorted_moves |> List.map ~f:(fun (m, _, _) -> m) in
-       iterative_deepening pool (curr_depth + 1) sorted_moves)
-        tt
-        killers
-        history_tbl
+        let pv = best_move :: pv_from_tt (P.do_move' pos best_move) tt curr_depth in
+        instrumentation.on_pv { depth = curr_depth + 1; pv };
+        let sorted_moves = sorted_moves |> List.map ~f:(fun (m, _, _) -> m) in
+        iterative_deepening
+          pool
+          (curr_depth + 1)
+          sorted_moves
+          tt
+          killers
+          history_tbl
+          (Some best_score)))
     else List.hd_exn moves
   in
   let moves = generate_moves pos in
@@ -603,7 +622,7 @@ let get_best_move ?(instrumentation = default_instrumentation) (pos : P.t) max_d
   let pool = Task.setup_pool ~num_domains:parallel () in
   let res =
     Task.run pool (fun _ ->
-      iterative_deepening pool 0 moves (TT.mk ()) (Killer.mk ()) (History.mk ()))
+      iterative_deepening pool 0 moves (TT.mk ()) (Killer.mk ()) (History.mk ()) None)
   in
   Task.teardown_pool pool;
   res
