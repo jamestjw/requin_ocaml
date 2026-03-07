@@ -33,6 +33,23 @@ let rec pvSearch
           ~is_pv
           ~history_tbl
   =
+  (* Mate scores are ply-relative (distance to mate). We normalize when storing
+     so TT entries remain comparable across different search plies, and restore
+     when reading. *)
+  let value_to_tt value curr_ply =
+    if value > T.value_mate_in_max_ply
+    then value + curr_ply
+    else if value < T.value_mated_in_max_ply
+    then value - curr_ply
+    else value
+  in
+  let value_from_tt value curr_ply =
+    if value > T.value_mate_in_max_ply
+    then value - curr_ply
+    else if value < T.value_mated_in_max_ply
+    then value + curr_ply
+    else value
+  in
   (* TODO: Can I add compile time constant for debugging? *)
   (* Stdlib.print_endline *)
   (* @@ String.concat ~sep:" " *)
@@ -122,7 +139,7 @@ let rec pvSearch
            ~m:move
            ~depth:remaining_depth
            ~eval_value
-           ~value:score
+           ~value:(value_to_tt score curr_ply)
            ~bound:TT.BOUND_LOWER;
       Continue_or_stop.Stop (beta, best_move, true))
     else if score > alpha
@@ -139,18 +156,19 @@ let rec pvSearch
   let process_tt_entry depth (tt_entry : TT.entry option) alpha =
     match tt_entry with
     | Some tt_entry ->
+      let tt_value = value_from_tt tt_entry.value curr_ply in
       let score =
         match tt_entry.depth >= depth, tt_entry.bound with
         | true, TT.BOUND_EXACT ->
           (* TODO: Check if we are at a Pv node before returning this *)
-          Some tt_entry.value
-        | true, TT.BOUND_LOWER when tt_entry.value >= beta -> Some tt_entry.value
-        | true, TT.BOUND_UPPER when tt_entry.value <= alpha -> Some tt_entry.value
+          Some tt_value
+        | true, TT.BOUND_LOWER when tt_value >= beta -> Some tt_value
+        | true, TT.BOUND_UPPER when tt_value <= alpha -> Some tt_value
         | _, _ -> None
       in
       let alpha =
         match tt_entry.depth >= depth, tt_entry.bound with
-        | true, TT.BOUND_LOWER -> Int.max alpha tt_entry.value
+        | true, TT.BOUND_LOWER -> Int.max alpha tt_value
         | _ -> alpha
       in
       (match score, tt_entry.bound with
@@ -247,7 +265,7 @@ let rec pvSearch
                     ~m
                     ~depth:remaining_depth
                     ~eval_value
-                    ~value:score
+                    ~value:(value_to_tt score curr_ply)
                     ~bound:TT.BOUND_EXACT
              | None, _ ->
                (* It's fine to set an upper bound even if we are doing a null move search *)
@@ -258,7 +276,7 @@ let rec pvSearch
                     ~m:T.none_move
                     ~depth:remaining_depth
                     ~eval_value
-                    ~value:score
+                    ~value:(value_to_tt score curr_ply)
                     ~bound:TT.BOUND_UPPER
              | _ -> ());
            score)))
