@@ -412,7 +412,7 @@ let evaluate pos _optimism =
   (* TODO: once we fix quiscence search, bring back this assert*)
   (* assert (BB.bb_is_empty @@ P.checkers pos); *)
   let score = P.psq_score pos in
-  let simple_eval = simple_eval pos @@ Types.WHITE in
+  let simple_eval = simple_eval pos Types.WHITE in
   let tempo_score =
     match P.side_to_move pos with
     | WHITE -> tempo
@@ -423,9 +423,9 @@ let evaluate pos _optimism =
   let ei =
     mk_eval_info () |> init_eval_info pos Types.WHITE |> init_eval_info pos Types.BLACK
   in
-  let ei, score', _mobility_white = evaluate_pieces_of_color pos ei Types.WHITE in
-  let _ei, score'', _mobility_black = evaluate_pieces_of_color pos ei Types.BLACK in
-  let score = Score.Infix.(score + score' - score'') in
+  let ei, score', mobility_white = evaluate_pieces_of_color pos ei Types.WHITE in
+  let _ei, score'', mobility_black = evaluate_pieces_of_color pos ei Types.BLACK in
+  let score = Score.Infix.(score + score' - score'' + mobility_white - mobility_black) in
   (* TODO: Figure out this scale factor business *)
   let score = interpolate score (Material.game_phase pos) Material.scale_factor_normal in
   (* let score = if Types.equal_colour (P.side_to_move pos) Types.WHITE then score else -score in *)
