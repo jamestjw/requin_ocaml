@@ -527,60 +527,53 @@ let get_best_move ?(instrumentation = default_instrumentation) (pos : P.t) max_d
           let b = score + aspiration_window in
           a, b
       in
-      let promises =
-        List.mapi moves ~f:(fun i move ->
-          (* TODO: alpha beta from one move should be used to tighten subsequent searches *)
-          Task.async pool (fun _ ->
-            let stats = mk_stats () in
-            ( move
-            , -pvSearch
-                 (P.do_move' pos move)
-                 0
-                 curr_depth
-                 alpha
-                 beta
-                 (not (P.is_white_to_move pos))
-                 (P.game_ply pos + 1)
-                 [ move ]
-                 ~stats
-                 ~may_prune:(not @@ P.is_capture pos move)
-                 ~tt
-                 ~killers
-                 ~is_null_window:false
-                 ~history_tbl
-                 ~is_pv:(i = 0)
-            , stats )))
+      let root_search_move move alpha beta ~is_null_window ~is_pv =
+        let stats = mk_stats () in
+        let score =
+          -pvSearch
+             (P.do_move' pos move)
+             0
+             curr_depth
+             alpha
+             beta
+             (not (P.is_white_to_move pos))
+             (P.game_ply pos + 1)
+             [ move ]
+             ~stats
+             ~may_prune:(not @@ P.is_capture pos move)
+             ~tt
+             ~killers
+             ~is_null_window
+             ~history_tbl
+             ~is_pv
+        in
+        score, stats
       in
-      let move_scores = List.map ~f:(Task.await pool) promises in
-      (* Single core search for easier debugging *)
-      (* (let move_scores = *)
-      (*    List.map moves ~f:(fun move -> *)
-      (*      ( move *)
-      (*      , -pvSearch *)
-      (*           (P.do_move' pos move) *)
-      (*           0 *)
-      (*           curr_depth *)
-      (*           initial_alpha *)
-      (*           initial_beta *)
-      (*           (P.is_white_to_move pos) *)
-      (*           (P.game_ply pos + 1) *)
-      (*           [ move ] *)
-      (*           ~may_prune:(not @@ P.is_capture pos move) *)
-      (*           ~tt *)
-      (*           ~is_null_window:false )) *)
-      (*  in *)
-      (* TODO: add transposition table entry *)
-      let stats =
-        List.fold move_scores ~init:(mk_stats ()) ~f:(fun acc (_, _, s) ->
-          merge_stats acc s)
+      let first_move = List.hd_exn moves in
+      let first_score, first_stats =
+        root_search_move first_move alpha beta ~is_null_window:false ~is_pv:true
       in
+      let stats = merge_stats (mk_stats ()) first_stats in
+      let move_scores = ref [ first_move, first_score ] in
+      let best_move = ref first_move in
+      let best_score = ref first_score in
+      let rest_moves = List.tl moves |> Option.value ~default:[] in
+      List.iter rest_moves ~f:(fun move ->
+        let final_score, move_stats =
+          root_search_move move alpha beta ~is_null_window:false ~is_pv:false
+        in
+        ignore (merge_stats stats move_stats);
+        move_scores := (move, final_score) :: !move_scores;
+        if final_score > !best_score
+        then (
+          best_score := final_score;
+          best_move := move));
+      let move_scores = !move_scores in
       let sorted_moves =
-        List.stable_sort move_scores ~compare:(fun (_, s1, _) (_, s2, _) -> compare s2 s1)
+        List.stable_sort move_scores ~compare:(fun (_, s1) (_, s2) -> compare s2 s1)
       in
-      let best_move, best_score =
-        let m, score, _ = List.hd_exn sorted_moves in
-        m, score
-      in
+      let best_move = !best_move in
+      let best_score = !best_score in
       if Option.is_some prev_score && (best_score <= alpha || best_score >= beta)
       then
         (* Aspiration window failed; re-search with full window. *)
@@ -605,7 +598,7 @@ let get_best_move ?(instrumentation = default_instrumentation) (pos : P.t) max_d
            missing (e.g., upper-bound stores use none_move). *)
         let pv = best_move :: pv_from_tt (P.do_move' pos best_move) tt curr_depth in
         instrumentation.on_pv { depth = curr_depth + 1; pv };
-        let sorted_moves = sorted_moves |> List.map ~f:(fun (m, _, _) -> m) in
+        let sorted_moves = sorted_moves |> List.map ~f:fst in
         iterative_deepening
           pool
           (curr_depth + 1)
