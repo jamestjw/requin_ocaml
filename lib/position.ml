@@ -14,6 +14,7 @@ module Position = struct
     { (* These fields are copied when making a move *)
       material_key : key
     ; pawn_key : key
+    ; psq_score : Score.t
     ; non_pawn_material : Types.value Map.M(ColourCmp).t
     ; castling_rights : int
     ; (* 50-move rule counter, draw if this reaches 100 as we count in plies *)
@@ -204,6 +205,7 @@ module Position = struct
   let key ({ st = { key; _ }; _ } as pos) = adjust_key50 pos false @@ key
   let pawn_key { st = { pawn_key; _ }; _ } = pawn_key
   let material_key { st = { material_key; _ }; _ } = material_key
+  let psq_score { st = { psq_score; _ }; _ } = psq_score
 
   let non_pawn_material_for_colour { st = { non_pawn_material; _ }; _ } colour =
     Utils.map_find non_pawn_material colour ~default:0
@@ -425,6 +427,22 @@ module Position = struct
     Array.get zobrist_data.en_passant (Types.file_of_sq sq |> Types.file_to_enum)
   ;;
 
+  let signed_psq_value piece sq =
+    let colour = Types.color_of_piece piece in
+    let colour_idx = Types.colour_to_enum colour in
+    let pt_idx = Types.type_of_piece piece |> Types.piece_type_to_enum in
+    let sq_idx = Types.square_to_enum sq in
+    let s =
+      Utils.matrix_get
+        (Array.get Psqt.piece_square_table_for_colour colour_idx)
+        pt_idx
+        sq_idx
+    in
+    match colour with
+    | Types.WHITE -> s
+    | Types.BLACK -> Score.neg s
+  ;;
+
   (* TODO: Test this function *)
   let set_castling_right
         ({ st; castling_rights_mask; castling_rook_square; castling_path; _ } as pos)
@@ -576,7 +594,7 @@ module Position = struct
 
   (* TODO: Unit test this *)
   let set_state ({ side_to_move; _ } as pos) =
-    let rec do_pieces pieces_bb (key, pawn_key, white_npm, black_npm) =
+    let rec do_pieces pieces_bb (key, pawn_key, white_npm, black_npm, psq_score) =
       if BB.bb_not_zero pieces_bb
       then (
         let sq_bb, rest = BB.pop_lsb pieces_bb in
@@ -587,6 +605,7 @@ module Position = struct
         let key =
           UInt64.logxor key @@ Utils.matrix_get zobrist_data.psq piece_enum sq_enum
         in
+        let psq_score = Score.add psq_score (signed_psq_value piece sq) in
         let pawn_key, white_npm, black_npm =
           match Types.type_of_piece piece with
           | Types.PAWN ->
@@ -602,8 +621,8 @@ module Position = struct
              | Types.WHITE -> pawn_key, white_npm + Types.piece_value piece, black_npm
              | Types.BLACK -> pawn_key, white_npm, black_npm + Types.piece_value piece)
         in
-        do_pieces rest (key, pawn_key, white_npm, black_npm))
-      else key, pawn_key, white_npm, black_npm
+        do_pieces rest (key, pawn_key, white_npm, black_npm, psq_score))
+      else key, pawn_key, white_npm, black_npm, psq_score
     in
     let checkers_bb =
       attackers_to_sq pos (square_of_pt_and_colour pos Types.KING side_to_move)
@@ -611,10 +630,14 @@ module Position = struct
     in
     let pos = set_check_info pos in
     let all_pieces = pieces pos in
-    let key, pawn_key, white_npm, black_npm =
+    let key, pawn_key, white_npm, black_npm, psq_score =
       do_pieces
         all_pieces
-        (UInt64.zero, zobrist_data.no_pawns, Types.value_zero, Types.value_zero)
+        ( UInt64.zero
+        , zobrist_data.no_pawns
+        , Types.value_zero
+        , Types.value_zero
+        , Score.zero )
     in
     let non_pawn_material =
       Map.of_alist_exn
@@ -654,7 +677,15 @@ module Position = struct
         Types.all_pieces
     in
     { pos with
-      st = { pos.st with key; pawn_key; material_key; checkers_bb; non_pawn_material }
+      st =
+        { pos.st with
+          key
+        ; pawn_key
+        ; material_key
+        ; psq_score
+        ; checkers_bb
+        ; non_pawn_material
+        }
     }
   ;;
 
@@ -1059,6 +1090,7 @@ module Position = struct
   let new_st () =
     { material_key = UInt64.zero
     ; pawn_key = UInt64.zero
+    ; psq_score = Score.zero
     ; castling_rights = 0
     ; rule50 = 0
     ; plies_from_null = 0
@@ -1159,7 +1191,7 @@ module Position = struct
      | None -> ());
     (* Handle castling, this also clears out the captured piece, setting
        the stage for the below. *)
-    let pos, captured_piece, dst, key =
+    let pos, captured_piece, dst, key, new_st =
       if is_castling
       then (
         let our_rook = Types.mk_piece us Types.ROOK in
@@ -1170,8 +1202,14 @@ module Position = struct
           UInt64.logxor key (get_zobrist_psq our_rook rook_src)
           |> UInt64.logxor (get_zobrist_psq our_rook rook_dst)
         in
-        pos, None, king_dst, key)
-      else pos, captured_piece, dst, key
+        let psq_score =
+          Score.Infix.(
+            new_st.psq_score
+            - signed_psq_value our_rook rook_src
+            + signed_psq_value our_rook rook_dst)
+        in
+        pos, None, king_dst, key, { new_st with psq_score })
+      else pos, captured_piece, dst, key, new_st
     in
     (* Handle piece captures *)
     let pos, key, new_st =
@@ -1219,11 +1257,15 @@ module Position = struct
         let pos = remove_piece pos capture_sq in
         (* Update material hash key and prefetch access to materialTable *)
         let key = UInt64.logxor key @@ get_zobrist_psq captured_piece capture_sq in
+        let psq_score =
+          Score.Infix.(new_st.psq_score - signed_psq_value captured_piece capture_sq)
+        in
         ( pos
         , key
         , { new_st with
             (* Reset rule50 *)
             rule50 = 0
+          ; psq_score
           ; (* Update the key with the updated count of the captured piece *)
             material_key =
               UInt64.logxor new_st.material_key
@@ -1236,6 +1278,13 @@ module Position = struct
     let key =
       UInt64.logxor key (get_zobrist_psq piece src)
       |> UInt64.logxor (get_zobrist_psq piece dst)
+    in
+    let new_st =
+      { new_st with
+        psq_score =
+          Score.Infix.(
+            new_st.psq_score - signed_psq_value piece src + signed_psq_value piece dst)
+      }
     in
     (* Reset en passant square *)
     let key, new_st =
@@ -1311,6 +1360,11 @@ module Position = struct
             , key
             , { new_st with
                 pawn_key = UInt64.logxor new_st.pawn_key (get_zobrist_psq piece dst)
+              ; psq_score =
+                  Score.Infix.(
+                    new_st.psq_score
+                    - signed_psq_value piece dst
+                    + signed_psq_value promote_to dst)
               ; non_pawn_material
               ; material_key =
                   UInt64.logxor new_st.material_key
@@ -1784,10 +1838,6 @@ module Position = struct
       in
       loop 3 (Stdlib.Option.get previous))
   ;;
-
-  (* TODO: Implement `flip` after we implement `fen` function *)
-  (* TODO: Implement this *)
-  let psq_score _pos = Score.mk 0 0
 
   (* Make empty position *)
   let mk () =
