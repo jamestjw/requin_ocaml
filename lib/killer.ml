@@ -19,5 +19,8 @@ let add_killer { data } ply move =
   if ply < Array.length data
   then (
     let k1, k2 = data.(ply) in
-    if Option.is_none k2 then data.(ply) <- Some move, k1)
+    match k1, k2 with
+    | Some m, _ when T.equal_move m move -> ()
+    | _, Some m when T.equal_move m move -> ()
+    | _ -> data.(ply) <- Some move, k1)
 ;;

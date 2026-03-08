@@ -302,7 +302,7 @@ let rec pvSearch
   let eval_value = offset * Eval.evaluate pos () in
   let is_in_check = P.is_in_check pos in
   let alpha_orig = alpha in
-  let do_move (alpha, best_move, is_first_move, idx) move =
+  let do_move quiet_moves (alpha, best_move, is_first_move, idx) move =
     let score =
       if is_first_move
       then search move alpha beta ~is_null_window:false ~is_pv
@@ -345,7 +345,9 @@ let rec pvSearch
       if T.move_is_ok move && not (P.is_capture pos move || T.is_promotion move)
       then (
         K.add_killer killers ply move;
-        History.update history_tbl move remaining_depth (P.moved_piece_exn pos move));
+        History.update history_tbl move remaining_depth (P.moved_piece_exn pos move);
+        List.iter quiet_moves ~f:(fun quiet_move ->
+          History.penalize history_tbl quiet_move remaining_depth));
       ignore
       @@ TT.store
            tt
@@ -358,10 +360,12 @@ let rec pvSearch
       Continue_or_stop.Stop (beta, best_move, true, idx))
     else if score > alpha
     then Continue_or_stop.Continue (score, Some move, false, idx + 1)
+    else if P.is_capture pos move || T.is_promotion move
+    then Continue_or_stop.Continue (alpha, best_move, false, idx + 1)
     else Continue_or_stop.Continue (alpha, best_move, false, idx + 1)
   in
   let do_move' alpha move ~is_first_move ~idx =
-    match do_move (alpha, None, is_first_move, idx) move with
+    match do_move [] (alpha, None, is_first_move, idx) move with
     | Continue_or_stop.Continue (score, m, _, _) -> score, m, false
     | Continue_or_stop.Stop (score, m, cut, _) -> score, m, cut
   in
@@ -476,9 +480,8 @@ let rec pvSearch
            let score, best_move, is_cut, _ =
              List.fold_until
                sorted_moves
-               (* If we didn't a hash move, then we are processing the first move here *)
                ~init:(alpha, None, not found_hash_move, 0)
-               ~f:do_move (* No cutoff if we finish *)
+               ~f:(do_move [])
                ~finish:(fun (a, b, _, idx) -> a, b, false, idx)
            in
            if (not is_cut) && score <= alpha_orig
@@ -554,26 +557,28 @@ let get_best_move ?(instrumentation = default_instrumentation) (pos : P.t) max_d
         root_search_move first_move alpha beta ~is_null_window:false ~is_pv:true
       in
       let stats = merge_stats (mk_stats ()) first_stats in
-      let move_scores = ref [ first_move, first_score ] in
-      let best_move = ref first_move in
-      let best_score = ref first_score in
       let rest_moves = List.tl moves |> Option.value ~default:[] in
-      List.iter rest_moves ~f:(fun move ->
-        let final_score, move_stats =
-          root_search_move move alpha beta ~is_null_window:false ~is_pv:false
-        in
-        ignore (merge_stats stats move_stats);
-        move_scores := (move, final_score) :: !move_scores;
-        if final_score > !best_score
-        then (
-          best_score := final_score;
-          best_move := move));
-      let move_scores = !move_scores in
+      let rest_promises =
+        List.map rest_moves ~f:(fun move ->
+          Task.async pool (fun _ ->
+            let score, move_stats =
+              root_search_move move alpha beta ~is_null_window:false ~is_pv:false
+            in
+            move, score, move_stats))
+      in
+      let rest_results = List.map rest_promises ~f:(Task.await pool) in
+      let move_scores =
+        List.fold
+          rest_results
+          ~init:[ first_move, first_score ]
+          ~f:(fun acc (move, score, s) ->
+            ignore (merge_stats stats s);
+            (move, score) :: acc)
+      in
       let sorted_moves =
         List.stable_sort move_scores ~compare:(fun (_, s1) (_, s2) -> compare s2 s1)
       in
-      let best_move = !best_move in
-      let best_score = !best_score in
+      let best_move, best_score = List.hd_exn sorted_moves in
       if Option.is_some prev_score && (best_score <= alpha || best_score >= beta)
       then
         (* Aspiration window failed; re-search with full window. *)
