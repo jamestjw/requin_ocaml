@@ -554,26 +554,28 @@ let get_best_move ?(instrumentation = default_instrumentation) (pos : P.t) max_d
         root_search_move first_move alpha beta ~is_null_window:false ~is_pv:true
       in
       let stats = merge_stats (mk_stats ()) first_stats in
-      let move_scores = ref [ first_move, first_score ] in
-      let best_move = ref first_move in
-      let best_score = ref first_score in
       let rest_moves = List.tl moves |> Option.value ~default:[] in
-      List.iter rest_moves ~f:(fun move ->
-        let final_score, move_stats =
-          root_search_move move alpha beta ~is_null_window:false ~is_pv:false
-        in
-        ignore (merge_stats stats move_stats);
-        move_scores := (move, final_score) :: !move_scores;
-        if final_score > !best_score
-        then (
-          best_score := final_score;
-          best_move := move));
-      let move_scores = !move_scores in
+      let rest_promises =
+        List.map rest_moves ~f:(fun move ->
+          Task.async pool (fun _ ->
+            let score, move_stats =
+              root_search_move move alpha beta ~is_null_window:false ~is_pv:false
+            in
+            move, score, move_stats))
+      in
+      let rest_results = List.map rest_promises ~f:(Task.await pool) in
+      let move_scores =
+        List.fold
+          rest_results
+          ~init:[ first_move, first_score ]
+          ~f:(fun acc (move, score, s) ->
+            ignore (merge_stats stats s);
+            (move, score) :: acc)
+      in
       let sorted_moves =
         List.stable_sort move_scores ~compare:(fun (_, s1) (_, s2) -> compare s2 s1)
       in
-      let best_move = !best_move in
-      let best_score = !best_score in
+      let best_move, best_score = List.hd_exn sorted_moves in
       if Option.is_some prev_score && (best_score <= alpha || best_score >= beta)
       then
         (* Aspiration window failed; re-search with full window. *)
