@@ -117,28 +117,36 @@ let init_eval_info pos us ei =
     (Types.colour_to_enum us)
     (Types.piece_type_to_enum Types.PAWN)
     our_pawn_attacks;
-  (* Init king safety tables only if we are going to use them *)
-  if
-    P.count_by_colour_and_pt pos us Types.QUEEN > 0
-    && P.non_pawn_material_for_colour pos us
-       >= Types.piece_type_value Types.QUEEN + Types.piece_type_value Types.ROOK
-  then (
-    let their_king_ring =
-      BB.bb_or
-        squares_around_their_king
-        (BB.shift
+  (*
+     King safety is currently disabled in scoring. Keep these fields neutral for
+     now and bring the full king safety initialization back when we add a real
+     king danger term to the final evaluation.
+
+     Previous initialization logic (kept here for easy restore):
+
+     if
+       P.count_by_colour_and_pt pos us Types.QUEEN > 0
+       && P.non_pawn_material_for_colour pos us
+          >= Types.piece_type_value Types.QUEEN + Types.piece_type_value Types.ROOK
+     then (
+       let their_king_ring =
+         BB.bb_or
            squares_around_their_king
-           (match us with
-            | Types.WHITE -> Types.SOUTH
-            | Types.BLACK -> Types.NORTH))
-    in
-    let b = BB.bb_and squares_around_their_king our_pawn_attacks in
-    let our_king_attackers_count = if BB.bb_not_zero b then BB.popcount b else 0 in
-    set_king_ring them their_king_ring ei
-    |> set_king_attackers_count us our_king_attackers_count
-    |> set_king_adjacent_zone_attacks_count us 0
-    |> set_king_attackers_weight us 0)
-  else set_king_ring them BB.empty ei |> set_king_attackers_count us 0
+           (BB.shift
+              squares_around_their_king
+              (match us with
+               | Types.WHITE -> Types.SOUTH
+               | Types.BLACK -> Types.NORTH))
+       in
+       let b = BB.bb_and squares_around_their_king our_pawn_attacks in
+       let our_king_attackers_count = if BB.bb_not_zero b then BB.popcount b else 0 in
+       set_king_ring them their_king_ring ei
+       |> set_king_attackers_count us our_king_attackers_count
+       |> set_king_adjacent_zone_attacks_count us 0
+       |> set_king_attackers_weight us 0)
+     else set_king_ring them BB.empty ei |> set_king_attackers_count us 0
+  *)
+  set_king_ring them BB.empty ei |> set_king_attackers_count us 0
 ;;
 
 let mobility_bonus =
@@ -279,16 +287,7 @@ let threatened_by_pawn_penalty =
 let evaluate_pieces_of_color pos ei us piece_type mobility_area =
   let them = Types.other_colour us in
   let piece_bb = P.pieces_of_colour_and_pt pos us piece_type in
-  let _their_king_square = P.square_of_pt_and_colour pos Types.KING them in
-  let do_sq
-        ( attacked_by
-        , king_attackers_count
-        , king_attackers_weight
-        , king_adjacent_zone_attacks_count
-        , mobility
-        , score )
-        sq
-    =
+  let do_sq (attacked_by, mobility, score) sq =
     (* Find attacked squares, including x-ray attacks for bishops and rooks *)
     let b =
       match piece_type with
@@ -304,22 +303,28 @@ let evaluate_pieces_of_color pos ei us piece_type mobility_area =
       | _ -> assert false
     in
     let attacked_by = BB.bb_or attacked_by b in
-    let king_attackers_count, king_attackers_weight, king_adjacent_zone_attacks_count =
-      if BB.bb_not_zero (BB.bb_and b (get_king_ring them ei))
-      then (
-        let bb =
-          BB.bb_and b
-          @@ Utils.matrix_get
-               ei.attacked_by
-               (Types.colour_to_enum them)
-               (Types.piece_type_to_enum Types.KING)
-        in
-        let kazac_delta = if BB.bb_not_zero bb then BB.popcount bb else 0 in
-        ( king_attackers_count + 1
-        , king_attackers_weight + king_attack_weights piece_type
-        , king_adjacent_zone_attacks_count + kazac_delta ))
-      else king_attackers_count, king_attackers_weight, king_adjacent_zone_attacks_count
-    in
+    (*
+       King safety bookkeeping is intentionally disabled for now. Re-enable the
+       king ring / attacker counters here when we add king safety scoring.
+
+       Previous logic (kept here for easy restore):
+
+       let king_attackers_count, king_attackers_weight, king_adjacent_zone_attacks_count =
+         if BB.bb_not_zero (BB.bb_and b (get_king_ring them ei))
+         then (
+           let bb =
+             BB.bb_and b
+             @@ Utils.matrix_get
+                  ei.attacked_by
+                  (Types.colour_to_enum them)
+                  (Types.piece_type_to_enum Types.KING)
+           in
+           let kazac_delta = if BB.bb_not_zero bb then BB.popcount bb else 0 in
+           ( king_attackers_count + 1
+           , king_attackers_weight + king_attack_weights piece_type
+           , king_adjacent_zone_attacks_count + kazac_delta ))
+         else king_attackers_count, king_attackers_weight, king_adjacent_zone_attacks_count
+    *)
     let mob = BB.popcount @@ BB.bb_and b mobility_area in
     let mobility =
       Score.Infix.(
@@ -362,28 +367,12 @@ let evaluate_pieces_of_color pos ei us piece_type mobility_area =
       else score
     in
     (* TODO: Finish other stuff *)
-    ( attacked_by
-    , king_attackers_count
-    , king_attackers_weight
-    , king_adjacent_zone_attacks_count
-    , mobility
-    , score )
+    attacked_by, mobility, score
   in
-  let ( attacked_by
-      , king_attackers_count
-      , king_attackers_weight
-      , king_adjacent_zone_attacks_count
-      , mobility
-      , score )
-    =
-    BB.fold_sq ~init:(BB.empty, 0, 0, 0, Score.zero, Score.zero) ~f:do_sq piece_bb
+  let attacked_by, mobility, score =
+    BB.fold_sq ~init:(BB.empty, Score.zero, Score.zero) ~f:do_sq piece_bb
   in
-  let ei =
-    set_attacked_by ei us piece_type attacked_by
-    |> set_king_attackers_count us king_attackers_count
-    |> set_king_attackers_weight us king_attackers_weight
-    |> set_king_adjacent_zone_attacks_count us king_adjacent_zone_attacks_count
-  in
+  let ei = set_attacked_by ei us piece_type attacked_by in
   ei, score, mobility
 ;;
 
@@ -428,9 +417,5 @@ let evaluate pos _optimism =
   let score = Score.Infix.(score + score' - score'' + mobility_white - mobility_black) in
   (* TODO: Figure out this scale factor business *)
   let score = interpolate score (Material.game_phase pos) Material.scale_factor_normal in
-  (* let score = if Types.equal_colour (P.side_to_move pos) Types.WHITE then score else -score in *)
-  (* let score = if Types.equal_colour (P.side_to_move pos) Types.BLACK then -score else score in *)
-
-  (* Stdlib.Printf.printf "Eval: %d, Pos: \n%s\n" score @@ P.show pos; *)
   score
 ;;
