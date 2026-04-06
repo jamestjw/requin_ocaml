@@ -347,14 +347,19 @@ let rec pvSearch
         in
         let score =
           if can_lmr
-          then
-            search_with_ply
-              move
-              alpha
-              (alpha + 1)
-              lmr_reduction
-              ~is_null_window:true
-              ~is_pv:false
+          then (
+            let reduced_score =
+              search_with_ply
+                move
+                alpha
+                (alpha + 1)
+                lmr_reduction
+                ~is_null_window:true
+                ~is_pv:false
+            in
+            if reduced_score > alpha
+            then search move alpha (alpha + 1) ~is_null_window:true ~is_pv:false
+            else reduced_score)
           else search move alpha (alpha + 1) ~is_null_window:true ~is_pv:false
         in
         if score > alpha && beta - alpha > 1
