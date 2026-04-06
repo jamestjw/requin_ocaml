@@ -130,21 +130,19 @@ let rec qsearch pos alpha beta is_white ply history ~stats ~qdepth =
   else if (not in_check) && stand_pat + qsearch_delta_margin <= alpha
   then alpha
   else (
-    let allow_checks = qdepth > qsearch_max_depth - qsearch_check_depth in
     let moves =
       if in_check
       then List.map (M.generate_legal pos) ~f:(fun m -> m, true, true, false)
       else
-        (* TODO: Avoid generate+filter; directly generate captures/checks for qsearch. *)
-        M.generate_legal pos
+        M.generate M.CAPTURES pos
+        |> List.filter ~f:(fun m ->
+          P.legal pos m && not (T.equal_move_type (T.get_move_type m) T.CASTLING))
         |> List.filter_map ~f:(fun m ->
-          let is_capture = P.is_capture pos m in
-          let gives_check = allow_checks && P.gives_check pos m in
-          if is_capture
+          if P.is_capture_stage pos m
           then (
-            (* SEE prune losing captures unless they give check. *)
-            let is_good_capture = P.see_ge pos m 1 in
-            if is_good_capture || gives_check
+            (* SEE prune losing captures; queen promotions are part of the capture stage. *)
+            let is_good_capture = T.is_promotion m || P.see_ge pos m 1 in
+            if is_good_capture
             then (
               let capture_value =
                 match P.piece_on pos (T.move_dst m) with
@@ -153,10 +151,8 @@ let rec qsearch pos alpha beta is_white ply history ~stats ~qdepth =
               in
               if stand_pat + capture_value + qsearch_delta_margin <= alpha
               then None
-              else Some (m, true, is_good_capture, gives_check))
+              else Some (m, true, is_good_capture, false))
             else None)
-          else if gives_check
-          then Some (m, false, false, true)
           else None)
     in
     if List.is_empty moves
