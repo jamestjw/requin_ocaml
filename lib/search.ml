@@ -195,6 +195,26 @@ let rec qsearch pos alpha beta is_white ply history ~stats ~qdepth =
       loop alpha sorted_moves))
 ;;
 
+let pick_next_move scored_moves start_idx =
+  let len = Array.length scored_moves in
+  let rec loop idx best_idx best_score =
+    if idx >= len
+    then best_idx
+    else (
+      let _, score = scored_moves.(idx) in
+      if score > best_score
+      then loop (idx + 1) idx score
+      else loop (idx + 1) best_idx best_score)
+  in
+  let _, start_score = scored_moves.(start_idx) in
+  let best_idx = loop (start_idx + 1) start_idx start_score in
+  if best_idx <> start_idx
+  then (
+    let tmp = scored_moves.(start_idx) in
+    scored_moves.(start_idx) <- scored_moves.(best_idx);
+    scored_moves.(best_idx) <- tmp)
+;;
+
 let rec pvSearch
           pos
           curr_ply
@@ -464,7 +484,7 @@ let rec pvSearch
            (* 4. Quiet moves - from history *)
            (* 3. Bad captures - -2000000 *)
            let killer_moves = K.get_killers killers ply in
-           let sorted_moves =
+           let scored_moves =
              List.map legal_moves ~f:(fun m ->
                let is_capture = P.is_capture pos m in
                let score =
@@ -482,15 +502,23 @@ let rec pvSearch
                    History.get history_tbl m (P.moved_piece_exn pos m)
                in
                m, score)
-             |> List.sort ~compare:(fun (_, v1) (_, v2) -> compare v2 v1)
-             |> List.map ~f:fst
+             |> Array.of_list
+           in
+           let rec loop idx acc =
+             if idx >= Array.length scored_moves
+             then (
+               let a, b, _, i = acc in
+               a, b, false, i)
+             else (
+               pick_next_move scored_moves idx;
+               let move, _ = scored_moves.(idx) in
+               match do_move [] acc move with
+               | Continue_or_stop.Continue next_acc -> loop (idx + 1) next_acc
+               | Continue_or_stop.Stop (score, best_move, _, next_idx) ->
+                 score, best_move, true, next_idx)
            in
            let score, best_move, is_cut, _ =
-             List.fold_until
-               sorted_moves
-               ~init:(alpha, None, not found_hash_move, 0)
-               ~f:(do_move [])
-               ~finish:(fun (a, b, _, idx) -> a, b, false, idx)
+             loop 0 (alpha, None, not found_hash_move, 0)
            in
            if (not is_cut) && score <= alpha_orig
            then stats.fail_low <- stats.fail_low + 1;
