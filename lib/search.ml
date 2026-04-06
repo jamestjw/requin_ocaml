@@ -243,14 +243,28 @@ let rec pvSearch
 
   (* Attempt null move pruning if we can, return an optional score if we get a cutoff *)
   let remaining_depth = max_depth - curr_ply in
+  let offset = if is_white then 1 else -1 in
+  let eval_value = offset * Eval.evaluate pos () in
   let maybe_attempt_nmp pos =
+    let stm = P.side_to_move pos in
+    let has_non_pawn_material =
+      P.count_by_colour_and_pt pos stm T.KNIGHT
+      + P.count_by_colour_and_pt pos stm T.BISHOP
+      + P.count_by_colour_and_pt pos stm T.ROOK
+      + P.count_by_colour_and_pt pos stm T.QUEEN
+      > 0
+    in
     let may_do_nmp =
       (* TODO: check for zugzwang, we could do something simple like check if there
        are only kings and pawns *)
-      remaining_depth >= null_move_reduction && (not (P.is_in_check pos)) && not is_pv
+      remaining_depth >= null_move_reduction
+      && (not (P.is_in_check pos))
+      && (not is_pv)
+      && has_non_pawn_material
+      && eval_value >= beta
       (* Add the following conditions
-      - !is_cut_node, we are likely to get a cut off in, don't risk it
-      - !(static eval > beta + 50 centipawns), because the position is so good, we are likely to get a cutoff anyway *)
+       - !is_cut_node, we are likely to get a cut off in, don't risk it
+       - !(static eval > beta + 50 centipawns), because the position is so good, we are likely to get a cutoff anyway *)
     in
     if may_do_nmp
     then (
@@ -298,8 +312,6 @@ let rec pvSearch
   let search move alpha beta ~is_null_window ~is_pv =
     search_with_ply move alpha beta 0 ~is_null_window ~is_pv
   in
-  let offset = if is_white then 1 else -1 in
-  let eval_value = offset * Eval.evaluate pos () in
   let is_in_check = P.is_in_check pos in
   let alpha_orig = alpha in
   let do_move quiet_moves (alpha, best_move, is_first_move, idx) move =
