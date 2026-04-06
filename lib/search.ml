@@ -453,6 +453,7 @@ let rec pvSearch
   then qsearch pos alpha beta is_white ply history ~stats ~qdepth:qsearch_max_depth
   else if
     (not is_in_check)
+    && (not is_null_window)
     && remaining_depth = 1
     && may_prune
     && eval_value + T.futility_margin_1 < alpha
@@ -462,6 +463,7 @@ let rec pvSearch
     alpha
   else if
     (not is_in_check)
+    && (not is_null_window)
     && remaining_depth = 2
     && may_prune
     && eval_value + T.futility_margin_2 < alpha
