@@ -20,6 +20,12 @@ let lmr_depth_threshold = 3
 let lmr_move_threshold = 3
 let lmr_reduction = 1
 
+let lmp_move_threshold = function
+  | 1 -> 4
+  | 2 -> 8
+  | _ -> Int.max_value
+;;
+
 (* TODO: Tune aspiration window size based on fail rate. *)
 let aspiration_window = 100
 let initial_alpha = -T.value_mate - 1
@@ -331,71 +337,86 @@ let rec pvSearch
   let is_in_check = P.is_in_check pos in
   let alpha_orig = alpha in
   let do_move quiet_moves (alpha, best_move, is_first_move, idx) move =
-    let score =
-      if is_first_move
-      then search move alpha beta ~is_null_window:false ~is_pv
-      else (
-        (* Search with null window, i.e. with [alpha , alpha + 1] *)
-        (* Since this isn't the first move, by definition it isn't in the PV *)
-        let can_lmr =
-          may_prune
-          && (not is_pv)
-          && (not is_in_check)
-          && remaining_depth >= lmr_depth_threshold
-          && idx >= lmr_move_threshold
-          && not (P.is_capture pos move || T.is_promotion move)
-        in
-        let score =
-          if can_lmr
-          then (
-            let reduced_score =
-              search_with_ply
-                move
-                alpha
-                (alpha + 1)
-                lmr_reduction
-                ~is_null_window:true
-                ~is_pv:false
-            in
-            if reduced_score > alpha
-            then search move alpha (alpha + 1) ~is_null_window:true ~is_pv:false
-            else reduced_score)
-          else search move alpha (alpha + 1) ~is_null_window:true ~is_pv:false
-        in
-        if score > alpha && beta - alpha > 1
-        then
-          (* re-search with full window *)
-          search move alpha beta ~is_null_window:false ~is_pv:false
-        else score)
+    let is_quiet = not (P.is_capture pos move || T.is_promotion move) in
+    let can_lmp =
+      (* Skip very late quiet moves in shallow non-PV null-window nodes 
+         because they are unlikely to raise alpha. *)
+      is_null_window
+      && may_prune
+      && (not is_pv)
+      && (not is_in_check)
+      && is_quiet
+      && remaining_depth = 2
+      && idx >= lmp_move_threshold remaining_depth
     in
-    if score >= beta
-    then (
-      stats.cutoffs <- stats.cutoffs + 1;
-      stats.fail_high <- stats.fail_high + 1;
-      stats.cutoff_index_sum <- stats.cutoff_index_sum + idx;
-      stats.cutoff_count <- stats.cutoff_count + 1;
-      if is_first_move then stats.first_move_cutoffs <- stats.first_move_cutoffs + 1;
-      if T.move_is_ok move && not (P.is_capture pos move || T.is_promotion move)
-      then (
-        K.add_killer killers ply move;
-        History.update history_tbl move remaining_depth (P.moved_piece_exn pos move);
-        List.iter quiet_moves ~f:(fun quiet_move ->
-          History.penalize history_tbl quiet_move remaining_depth));
-      ignore
-      @@ TT.store
-           tt
-           ~key:(P.key pos)
-           ~m:move
-           ~depth:remaining_depth
-           ~eval_value
-           ~value:(value_to_tt score curr_ply)
-           ~bound:TT.BOUND_LOWER;
-      Continue_or_stop.Stop (beta, best_move, true, idx))
-    else if score > alpha
-    then Continue_or_stop.Continue (score, Some move, false, idx + 1)
-    else if P.is_capture pos move || T.is_promotion move
+    if can_lmp
     then Continue_or_stop.Continue (alpha, best_move, false, idx + 1)
-    else Continue_or_stop.Continue (alpha, best_move, false, idx + 1)
+    else (
+      let score =
+        if is_first_move
+        then search move alpha beta ~is_null_window:false ~is_pv
+        else (
+          (* Search with null window, i.e. with [alpha , alpha + 1] *)
+          (* Since this isn't the first move, by definition it isn't in the PV *)
+          let can_lmr =
+            may_prune
+            && (not is_pv)
+            && (not is_in_check)
+            && remaining_depth >= lmr_depth_threshold
+            && idx >= lmr_move_threshold
+            && is_quiet
+          in
+          let score =
+            if can_lmr
+            then (
+              let reduced_score =
+                search_with_ply
+                  move
+                  alpha
+                  (alpha + 1)
+                  lmr_reduction
+                  ~is_null_window:true
+                  ~is_pv:false
+              in
+              if reduced_score > alpha
+              then search move alpha (alpha + 1) ~is_null_window:true ~is_pv:false
+              else reduced_score)
+            else search move alpha (alpha + 1) ~is_null_window:true ~is_pv:false
+          in
+          if score > alpha && beta - alpha > 1
+          then
+            (* re-search with full window *)
+            search move alpha beta ~is_null_window:false ~is_pv:false
+          else score)
+      in
+      if score >= beta
+      then (
+        stats.cutoffs <- stats.cutoffs + 1;
+        stats.fail_high <- stats.fail_high + 1;
+        stats.cutoff_index_sum <- stats.cutoff_index_sum + idx;
+        stats.cutoff_count <- stats.cutoff_count + 1;
+        if is_first_move then stats.first_move_cutoffs <- stats.first_move_cutoffs + 1;
+        if T.move_is_ok move && is_quiet
+        then (
+          K.add_killer killers ply move;
+          History.update history_tbl move remaining_depth (P.moved_piece_exn pos move);
+          List.iter quiet_moves ~f:(fun quiet_move ->
+            History.penalize history_tbl quiet_move remaining_depth));
+        ignore
+        @@ TT.store
+             tt
+             ~key:(P.key pos)
+             ~m:move
+             ~depth:remaining_depth
+             ~eval_value
+             ~value:(value_to_tt score curr_ply)
+             ~bound:TT.BOUND_LOWER;
+        Continue_or_stop.Stop (beta, best_move, true, idx))
+      else if score > alpha
+      then Continue_or_stop.Continue (score, Some move, false, idx + 1)
+      else if not is_quiet
+      then Continue_or_stop.Continue (alpha, best_move, false, idx + 1)
+      else Continue_or_stop.Continue (alpha, best_move, false, idx + 1))
   in
   let do_move' alpha move ~is_first_move ~idx =
     match do_move [] (alpha, None, is_first_move, idx) move with
