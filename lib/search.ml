@@ -32,6 +32,17 @@ let initial_alpha = -T.value_mate - 1
 let initial_beta = T.value_mate + 1
 let generate_moves pos = M.generate_legal pos
 
+let capture_order_score pos move =
+  let victim_value =
+    match P.piece_on pos (T.move_dst move) with
+    | Some piece -> T.piece_value piece
+    | None -> 0
+  in
+  let attacker_value = P.piece_on_exn pos (T.move_src move) |> T.piece_value in
+  let promotion_bonus = if T.is_promotion move then T.queen_value else 0 in
+  (victim_value * 16) - attacker_value + promotion_bonus
+;;
+
 type stats =
   { mutable nodes : int
   ; mutable qnodes : int
@@ -168,7 +179,11 @@ let rec qsearch pos alpha beta is_white ply history ~stats ~qdepth =
         List.map moves ~f:(fun (m, is_capture, is_good_capture, gives_check) ->
           let score =
             if is_capture
-            then if is_good_capture then 2000000 else -2000000
+            then (
+              let capture_score = capture_order_score pos m in
+              if is_good_capture
+              then 2000000 + capture_score
+              else -2000000 + capture_score)
             else if gives_check
             then 1000000
             else 0
@@ -520,9 +535,7 @@ let rec pvSearch
                  if is_capture
                  then
                    if P.see_ge pos m 1
-                   then
-                     (* TODO: maybe some captures are better than others? *)
-                     2000000
+                   then 2000000 + capture_order_score pos m
                    else -2000000 (* Bad captures last *)
                  else if List.find killer_moves ~f:(T.equal_move m) |> Option.is_some
                  then 1500000

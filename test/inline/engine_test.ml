@@ -213,3 +213,43 @@ let%test_unit "see_ge falls back to the simple threshold check on promotions" =
   assert (P.see_ge pos move 0);
   assert (not (P.see_ge pos move 1))
 ;;
+
+let%test_unit "capture_order_score prefers more valuable victims" =
+  let pos =
+    create_pos
+      [ T.W_KING, T.G1
+      ; T.B_KING, T.G8
+      ; T.W_KNIGHT, T.E4
+      ; T.B_PAWN, T.C5
+      ; T.B_QUEEN, T.F6
+      ]
+      T.WHITE
+  in
+  let take_pawn = T.mk_move T.C5 T.E4 in
+  let take_queen = T.mk_move T.F6 T.E4 in
+  assert (S.capture_order_score pos take_queen > S.capture_order_score pos take_pawn)
+;;
+
+let%test_unit "capture_order_score prefers cheaper attackers for the same victim" =
+  let pos =
+    create_pos
+      [ T.W_KING, T.G1; T.B_KING, T.G8; T.W_PAWN, T.E4; T.W_QUEEN, T.A4; T.B_QUEEN, T.D5 ]
+      T.WHITE
+  in
+  let pawn_takes_queen = T.mk_move T.D5 T.E4 in
+  let queen_takes_queen = T.mk_move T.D5 T.A4 in
+  assert (
+    S.capture_order_score pos pawn_takes_queen
+    > S.capture_order_score pos queen_takes_queen)
+;;
+
+let%test_unit "capture_order_score gives promotions an extra boost" =
+  let pos =
+    create_pos
+      [ T.W_KING, T.H1; T.B_KING, T.A8; T.W_PAWN, T.E7; T.W_QUEEN, T.C4; T.B_PAWN, T.D6 ]
+      T.WHITE
+  in
+  let promote = T.mk_move ~move_type:T.PROMOTION ~ppt:(Some T.QUEEN) T.E8 T.E7 in
+  let capture_pawn = T.mk_move T.D6 T.C4 in
+  assert (S.capture_order_score pos promote > S.capture_order_score pos capture_pawn)
+;;
