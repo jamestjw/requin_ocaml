@@ -452,7 +452,8 @@ let rec pvSearch
   else if remaining_depth <= 0
   then qsearch pos alpha beta is_white ply history ~stats ~qdepth:qsearch_max_depth
   else if
-    (not is_in_check)
+    false
+    && (not is_in_check)
     && (not is_null_window)
     && remaining_depth = 1
     && may_prune
@@ -560,7 +561,7 @@ let rec pvSearch
 let get_best_move ?(instrumentation = default_instrumentation) (pos : P.t) max_depth
   : T.move
   =
-  let rec iterative_deepening pool curr_depth moves tt killers history_tbl prev_score =
+  let rec iterative_deepening curr_depth moves tt killers history_tbl prev_score =
     if curr_depth < max_depth
     then (
       History.decay history_tbl;
@@ -580,8 +581,8 @@ let get_best_move ?(instrumentation = default_instrumentation) (pos : P.t) max_d
              (P.do_move' pos move)
              0
              curr_depth
-             alpha
-             beta
+             (-beta)
+             (-alpha)
              (not (P.is_white_to_move pos))
              (P.game_ply pos + 1)
              [ move ]
@@ -601,31 +602,47 @@ let get_best_move ?(instrumentation = default_instrumentation) (pos : P.t) max_d
       in
       let stats = merge_stats (mk_stats ()) first_stats in
       let rest_moves = List.tl moves |> Option.value ~default:[] in
-      let rest_promises =
-        List.map rest_moves ~f:(fun move ->
-          Task.async pool (fun _ ->
-            let score, move_stats =
-              root_search_move move alpha beta ~is_null_window:false ~is_pv:false
-            in
-            move, score, move_stats))
+      let rec search_root_moves alpha best_move best_score move_scores = function
+        | [] -> List.rev move_scores, best_move, best_score
+        | move :: rest ->
+          let probe_score, probe_stats =
+            root_search_move move alpha (alpha + 1) ~is_null_window:true ~is_pv:false
+          in
+          let score, extra_stats =
+            if probe_score >= alpha && beta - alpha > 1
+            then (
+              let full_score, full_stats =
+                root_search_move move alpha beta ~is_null_window:false ~is_pv:true
+              in
+              full_score, merge_stats probe_stats full_stats)
+            else probe_score, probe_stats
+          in
+          ignore (merge_stats stats extra_stats);
+          if score > best_score
+          then search_root_moves score move score ((move, score) :: move_scores) rest
+          else
+            search_root_moves
+              alpha
+              best_move
+              best_score
+              ((move, score) :: move_scores)
+              rest
       in
-      let rest_results = List.map rest_promises ~f:(Task.await pool) in
-      let move_scores =
-        List.fold
-          rest_results
-          ~init:[ first_move, first_score ]
-          ~f:(fun acc (move, score, s) ->
-            ignore (merge_stats stats s);
-            (move, score) :: acc)
+      let move_scores, best_move, best_score =
+        search_root_moves
+          first_score
+          first_move
+          first_score
+          [ first_move, first_score ]
+          rest_moves
       in
       let sorted_moves =
         List.stable_sort move_scores ~compare:(fun (_, s1) (_, s2) -> compare s2 s1)
       in
-      let best_move, best_score = List.hd_exn sorted_moves in
       if Option.is_some prev_score && (best_score <= alpha || best_score >= beta)
       then
         (* Aspiration window failed; re-search with full window. *)
-        iterative_deepening pool curr_depth moves tt killers history_tbl None
+        iterative_deepening curr_depth moves tt killers history_tbl None
       else (
         let elapsed = Float.max 0.001 (Stdlib.Sys.time () -. start_time) in
         let total_nodes = stats.nodes + stats.qnodes in
@@ -648,7 +665,6 @@ let get_best_move ?(instrumentation = default_instrumentation) (pos : P.t) max_d
         instrumentation.on_pv { depth = curr_depth + 1; pv };
         let sorted_moves = sorted_moves |> List.map ~f:fst in
         iterative_deepening
-          pool
           (curr_depth + 1)
           sorted_moves
           tt
@@ -660,11 +676,5 @@ let get_best_move ?(instrumentation = default_instrumentation) (pos : P.t) max_d
   let moves = generate_moves pos in
   if List.is_empty moves then failwith "no legal moves";
   if not (max_depth > 0) then failwith "depth needs to be > 0";
-  let pool = Task.setup_pool ~num_domains:parallel () in
-  let res =
-    Task.run pool (fun _ ->
-      iterative_deepening pool 0 moves (TT.mk ()) (Killer.mk ()) (History.mk ()) None)
-  in
-  Task.teardown_pool pool;
-  res
+  iterative_deepening 0 moves (TT.mk ()) (Killer.mk ()) (History.mk ()) None
 ;;
