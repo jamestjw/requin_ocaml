@@ -154,3 +154,62 @@ let%test_unit "can search start position" =
   let _ = S.get_best_move pos 5 in
   assert true
 ;;
+
+let%test_unit "see_ge accepts a free rook capture" =
+  let pos =
+    create_pos [ T.W_KING, T.E1; T.B_KING, T.E8; T.W_ROOK, T.A1; T.B_ROOK, T.A8 ] T.WHITE
+  in
+  let move = T.mk_move T.A8 T.A1 in
+  assert (P.see_ge pos move T.rook_value)
+;;
+
+let%test_unit "see_ge rejects thresholds above a free rook capture" =
+  let pos =
+    create_pos [ T.W_KING, T.E1; T.B_KING, T.E8; T.W_ROOK, T.A1; T.B_ROOK, T.A8 ] T.WHITE
+  in
+  let move = T.mk_move T.A8 T.A1 in
+  assert (not (P.see_ge pos move T.queen_value))
+;;
+
+let%test_unit "see_ge distinguishes an even exchange from a material gain" =
+  let pos =
+    create_pos [ T.W_KING, T.E1; T.B_KING, T.B8; T.W_ROOK, T.A1; T.B_ROOK, T.A8 ] T.WHITE
+  in
+  let move = T.mk_move T.A8 T.A1 in
+  assert (P.see_ge pos move 0);
+  assert (not (P.see_ge pos move 1))
+;;
+
+let%test_unit "see_ge sees an x-ray rook recapture behind the captured pawn" =
+  let pos =
+    create_pos
+      [ T.W_KING, T.G1; T.B_KING, T.G8; T.W_QUEEN, T.D1; T.B_PAWN, T.D5; T.B_ROOK, T.D8 ]
+      T.WHITE
+  in
+  let move = T.mk_move T.D5 T.D1 in
+  assert (not (P.see_ge pos move 0))
+;;
+
+let%test_unit "see_ge ignores a pinned recapturing knight" =
+  let pos =
+    create_pos
+      [ T.W_KING, T.G1
+      ; T.B_KING, T.E8
+      ; T.W_ROOK, T.E1
+      ; T.W_ROOK, T.C1
+      ; T.B_KNIGHT, T.E7
+      ; T.B_BISHOP, T.C8
+      ]
+      T.WHITE
+  in
+  let move = T.mk_move T.C8 T.C1 in
+  assert (P.see_ge pos move 100)
+;;
+
+let%test_unit "see_ge falls back to the simple threshold check on promotions" =
+  let pos = create_pos [ T.W_KING, T.H1; T.B_KING, T.A8; T.W_PAWN, T.E7 ] T.WHITE in
+  let move = T.mk_move ~move_type:T.PROMOTION ~ppt:(Some T.QUEEN) T.E8 T.E7 in
+  (* Non-normal moves currently bypass full SEE and use the simple 0 >= threshold fallback. *)
+  assert (P.see_ge pos move 0);
+  assert (not (P.see_ge pos move 1))
+;;
