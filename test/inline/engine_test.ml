@@ -214,6 +214,24 @@ let%test_unit "see_ge falls back to the simple threshold check on promotions" =
   assert (not (P.see_ge pos move 1))
 ;;
 
+let%test_unit "pseudo_legal accepts kingside castling when available" =
+  let pos = P.from_fen "r3k2r/8/8/8/8/8/8/R3K2R w KQkq - 0 1" |> Stdlib.Result.get_ok in
+  let move = T.mk_move ~move_type:T.CASTLING T.H1 T.E1 in
+  assert (P.pseudo_legal pos move)
+;;
+
+let%test_unit "pseudo_legal accepts queen promotion push" =
+  let pos = create_pos [ T.W_KING, T.H1; T.B_KING, T.A8; T.W_PAWN, T.E7 ] T.WHITE in
+  let move = T.mk_move ~move_type:T.PROMOTION ~ppt:(Some T.QUEEN) T.E8 T.E7 in
+  assert (P.pseudo_legal pos move)
+;;
+
+let%test_unit "pseudo_legal rejects impossible en passant capture" =
+  let pos = P.from_fen "4k3/8/8/3pP3/8/8/8/4K3 w - - 0 1" |> Stdlib.Result.get_ok in
+  let move = T.mk_move ~move_type:T.EN_PASSANT T.D6 T.E5 in
+  assert (not (P.pseudo_legal pos move))
+;;
+
 let%test_unit "capture_order_score prefers more valuable victims" =
   let pos =
     create_pos

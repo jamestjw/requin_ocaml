@@ -792,103 +792,129 @@ module Position = struct
     let them = Types.other_colour us in
     let src = Types.move_src m in
     let dst = Types.move_dst m in
-    let our_pieces = pieces_of_colour pos them in
+    let our_pieces = pieces_of_colour pos us in
     let their_pieces = pieces_of_colour pos them in
     let all_pieces = pieces pos in
-    (* TODO: Figure out if null-moves may be passed to this fn. *)
+    let move_type = Types.get_move_type m in
     let piece = moved_piece pos m in
-    (* Use a slower but simpler function for uncommon cases
-       yet we skip the legality check of MoveList<LEGAL>(). *)
-    if not @@ Types.equal_move_type (Types.get_move_type m) Types.NORMAL
-    then failwith "TODO: Implement this after move generation is done"
-    else (
-      (* FIXME: We know this is not a promotion, hence `ppt` should be None,
-         but we only have 4 bits to represent the `ppt`, so we put the
-         responsibility on the caller to not rely on the `ppt` when the
-         move type is not PROMOTION *)
-      (* assert (Types.get_ppt m |> Option.is_none); *)
-      match piece with
-      | None -> false (* If there is no piece, the move is definitely illegal *)
-      | Some piece ->
-        let piece_type = Types.type_of_piece piece in
-        (* If the moved piece doesn't belong to the side to move *)
-        if not @@ Types.equal_colour us @@ Types.color_of_piece piece
-        then false (* If the destination square is occupied by a friendly piece *)
-        else if BB.bb_not_zero (BB.bb_and_sq our_pieces dst)
-        then false
-        else if
-          (* Handle pawn moves:
-               1. This can't be a promotion, hence the destination cannot be
-               on the 1st and last ranks *)
-          Types.equal_piece_type piece_type Types.PAWN
-          && BB.bb_not_zero (BB.bb_or BB.rank_8 BB.rank_1 |> BB.sq_and_bb dst)
-        then false
-        else if
-          (* 2. It must be either a capture, a single push, or double push *)
-          Types.equal_piece_type piece_type Types.PAWN
-          (* Not a capture *)
-          && BB.bb_is_empty
-               (BB.pawn_attacks_bb_from_sq us src
-                |> BB.bb_and their_pieces
-                |> BB.sq_and_bb dst)
-          (* Not a single push *)
-          && (not
-                (Types.equal_square
-                   (Types.sq_plus_dir src (Types.pawn_push_direction us)
-                    |> Stdlib.Option.get)
-                   dst
-                 && is_empty pos dst))
-          (* Not a double push *)
-          && not
-               (Types.equal_square
-                  (Types.sq_plus_dir_twice src (Types.pawn_push_direction us)
-                   |> Stdlib.Option.get)
-                  dst
-                (* Verify that pawn is on starting rank *)
-                && (Types.equal_rank Types.RANK_2 @@ Types.relative_rank_of_sq us src)
-                (* Verify that both squares in front of the pawn are empty *)
-                && is_empty pos dst
-                && is_empty
-                     pos
-                     (Types.sq_sub_dir dst (Types.pawn_push_direction us)
-                      |> Stdlib.Option.get))
-        then false
-        else if
-          (* If its not a pawn, then the destination square must be a
-               square that it attacks. *)
-          (not @@ Types.equal_piece_type piece_type Types.PAWN)
-          && BB.bb_is_empty
-               (BB.attacks_bb_occupied piece_type src all_pieces |> BB.sq_and_bb dst)
+    let on_backrank = BB.bb_not_zero (BB.bb_or BB.rank_8 BB.rank_1 |> BB.sq_and_bb dst) in
+    match piece with
+    | None -> false
+    | Some piece ->
+      let piece_type = Types.type_of_piece piece in
+      let in_check = BB.bb_not_zero @@ checkers pos in
+      let evasion_allows_dst () =
+        let checkers' = checkers pos in
+        if not in_check
+        then true
+        else if Types.equal_piece_type Types.KING piece_type
         then
-          false
-          (* Evasions generator already takes care to avoid some kind of
-               illegal moves and legal() relies on this. We therefore have
-               to take care that the same kind of moves are filtered out
-               here. *)
-        else if BB.bb_not_zero @@ checkers pos
-        then (
-          let checkers' = checkers pos in
-          if not @@ Types.equal_piece_type Types.KING piece_type
-          then
-            (* There is more than one checker, hence moving the king
-                 cannot be legal. *)
-            if BB.more_than_one checkers'
-            then false
-            else
-              (* Since we are not moving the king, we must either capture
-                   the attacker or interpose the check. *)
+          BB.bb_is_empty
+            (attackers_to_occupied pos dst (BB.bb_xor_sq all_pieces src)
+             |> BB.bb_and their_pieces)
+        else if BB.more_than_one checkers'
+        then false
+        else
+          BB.bb_not_zero
+            (BB.between_bb
+               (square_of_pt_and_colour pos Types.KING us)
+               (BB.lsb checkers' |> BB.bb_to_square)
+             |> BB.sq_and_bb dst)
+      in
+      if not @@ Types.equal_colour us @@ Types.color_of_piece piece
+      then false
+      else (
+        match move_type with
+        | Types.NORMAL ->
+          if BB.bb_not_zero (BB.bb_and_sq our_pieces dst)
+          then false
+          else if Types.equal_piece_type piece_type Types.PAWN && on_backrank
+          then false
+          else if Types.equal_piece_type piece_type Types.PAWN
+          then (
+            let is_pawn_capture =
               BB.bb_not_zero
-                (BB.between_bb
-                   (square_of_pt_and_colour pos Types.KING us)
-                   (BB.lsb checkers' |> BB.bb_to_square)
+                (BB.pawn_attacks_bb_from_sq us src
+                 |> BB.bb_and their_pieces
                  |> BB.sq_and_bb dst)
-          else
-            (* Ensure that we are not moving the king to another attacked
-                 square. *)
+            in
+            let is_single_push =
+              Types.equal_square
+                (Types.sq_plus_dir src (Types.pawn_push_direction us) |> Stdlib.Option.get)
+                dst
+              && is_empty pos dst
+            in
+            let is_double_push =
+              Types.equal_square
+                (Types.sq_plus_dir_twice src (Types.pawn_push_direction us)
+                 |> Stdlib.Option.get)
+                dst
+              && (Types.equal_rank Types.RANK_2 @@ Types.relative_rank_of_sq us src)
+              && is_empty pos dst
+              && is_empty
+                   pos
+                   (Types.sq_sub_dir dst (Types.pawn_push_direction us)
+                    |> Stdlib.Option.get)
+            in
+            (is_pawn_capture || is_single_push || is_double_push) && evasion_allows_dst ())
+          else if
             BB.bb_is_empty
-              (attackers_to_occupied pos dst (BB.bb_xor_sq all_pieces src)
-               |> BB.bb_and their_pieces))
-        else true)
+              (BB.attacks_bb_occupied piece_type src all_pieces |> BB.sq_and_bb dst)
+          then false
+          else evasion_allows_dst ()
+        | Types.PROMOTION ->
+          if
+            (not (Types.equal_piece_type piece_type Types.PAWN))
+            || (not on_backrank)
+            || Option.is_none (Types.get_ppt m)
+            || BB.bb_not_zero (BB.bb_and_sq our_pieces dst)
+          then false
+          else (
+            let is_capture_promo =
+              BB.bb_not_zero
+                (BB.pawn_attacks_bb_from_sq us src
+                 |> BB.bb_and their_pieces
+                 |> BB.sq_and_bb dst)
+            in
+            let is_push_promo =
+              Types.equal_square
+                (Types.sq_plus_dir src (Types.pawn_push_direction us) |> Stdlib.Option.get)
+                dst
+              && is_empty pos dst
+            in
+            (is_capture_promo || is_push_promo) && evasion_allows_dst ())
+        | Types.EN_PASSANT ->
+          if
+            (not (Types.equal_piece_type piece_type Types.PAWN))
+            || not
+                 (Option.value_map
+                    (ep_square pos)
+                    ~default:false
+                    ~f:(Types.equal_square dst))
+          then false
+          else (
+            let captured_sq =
+              Types.sq_sub_dir dst (Types.pawn_push_direction us) |> Stdlib.Option.get
+            in
+            BB.bb_not_zero (BB.pawn_attacks_bb_from_sq us src |> BB.sq_and_bb dst)
+            && is_empty pos dst
+            && Option.value_map (piece_on pos captured_sq) ~default:false ~f:(fun p ->
+              Types.equal_piece p (Types.mk_piece them Types.PAWN))
+            && legal pos m)
+        | Types.CASTLING ->
+          if
+            (not (Types.equal_piece_type piece_type Types.KING))
+            || Option.is_some (Types.get_ppt m)
+            || not (BB.bb_not_zero (BB.bb_and_sq our_pieces dst))
+          then false
+          else (
+            let is_kingside = Types.compare_square dst src > 0 in
+            let cr = Types.mk_castling_right ~color:us ~is_kingside in
+            Option.value_map (piece_on pos dst) ~default:false ~f:(fun p ->
+              Types.equal_piece p (Types.mk_piece us Types.ROOK))
+            && can_castle pos cr
+            && (not (castling_impeded pos cr))
+            && not in_check))
   ;;
 
   (* Tests whether a pseudo-legal move gives a check *)
