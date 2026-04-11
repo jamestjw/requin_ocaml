@@ -33,6 +33,11 @@ let initial_alpha = -T.value_mate - 1
 let initial_beta = T.value_mate + 1
 let generate_moves pos = M.generate_legal pos
 
+let score_is_resolved_mate score completed_depth =
+  let mate_distance = T.value_mate - Int.abs score in
+  Int.abs score > T.value_mate_in_max_ply && mate_distance <= completed_depth
+;;
+
 let capture_order_score pos move =
   let victim_value =
     match P.piece_on pos (T.move_dst move) with
@@ -858,13 +863,16 @@ let get_best_move ?(instrumentation = default_instrumentation) (pos : P.t) max_d
         let pv = best_move :: pv_from_tt (P.do_move' pos best_move) tt curr_depth in
         instrumentation.on_pv { depth = curr_depth + 1; pv };
         let sorted_moves = sorted_moves |> List.map ~f:fst in
-        iterative_deepening
-          (curr_depth + 1)
-          sorted_moves
-          tt
-          killers
-          history_tbl
-          (Some best_score)))
+        if score_is_resolved_mate best_score (curr_depth + 1)
+        then best_move
+        else
+          iterative_deepening
+            (curr_depth + 1)
+            sorted_moves
+            tt
+            killers
+            history_tbl
+            (Some best_score)))
     else List.hd_exn moves
   in
   let moves = generate_moves pos in
