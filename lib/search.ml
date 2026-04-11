@@ -32,6 +32,10 @@ let initial_alpha = -T.value_mate - 1
 let initial_beta = T.value_mate + 1
 let generate_moves pos = M.generate_legal pos
 
+let legal_move_stages killers ply =
+  [ M.Good_captures; M.Killers (K.get_killers killers ply); M.Quiets; M.Bad_captures ]
+;;
+
 let capture_order_score pos move =
   let victim_value =
     match P.piece_on pos (T.move_dst move) with
@@ -41,6 +45,41 @@ let capture_order_score pos move =
   let attacker_value = P.piece_on_exn pos (T.move_src move) |> T.piece_value in
   let promotion_bonus = if T.is_promotion move then T.queen_value else 0 in
   (victim_value * 16) - attacker_value + promotion_bonus
+;;
+
+let pick_next_move scored_moves start_idx =
+  let len = Array.length scored_moves in
+  let rec loop idx best_idx best_score =
+    if idx >= len
+    then best_idx
+    else (
+      let _, score = scored_moves.(idx) in
+      if score > best_score
+      then loop (idx + 1) idx score
+      else loop (idx + 1) best_idx best_score)
+  in
+  let _, start_score = scored_moves.(start_idx) in
+  let best_idx = loop (start_idx + 1) start_idx start_score in
+  if best_idx <> start_idx
+  then (
+    let tmp = scored_moves.(start_idx) in
+    scored_moves.(start_idx) <- scored_moves.(best_idx);
+    scored_moves.(best_idx) <- tmp)
+;;
+
+let ordered_moves_by_score moves ~score =
+  List.map moves ~f:(fun move -> move, score move)
+  |> Array.of_list
+  |> fun scored_moves ->
+  let rec loop idx acc =
+    if idx >= Array.length scored_moves
+    then List.rev acc
+    else (
+      pick_next_move scored_moves idx;
+      let move, _ = scored_moves.(idx) in
+      loop (idx + 1) (move :: acc))
+  in
+  loop 0 []
 ;;
 
 type stats =
@@ -77,6 +116,26 @@ type pv_info =
 type instrumentation =
   { on_info : info -> unit
   ; on_pv : pv_info -> unit
+  }
+
+type move_stage =
+  | Stage_hash
+  | Stage_good_captures
+  | Stage_killers
+  | Stage_quiets
+  | Stage_bad_captures
+  | Stage_done
+
+type move_picker =
+  { pos : P.t
+  ; history_tbl : History.t
+  ; hash_move : T.move option
+  ; killer_moves : T.move list
+  ; mutable stage : move_stage
+  ; mutable good_captures : T.move list option
+  ; mutable quiets : T.move list option
+  ; mutable bad_captures : T.move list option
+  ; mutable stage_moves : T.move list
   }
 
 let mk_stats () =
@@ -119,6 +178,117 @@ let default_instrumentation =
   { on_info = (fun (_ : info) -> ()); on_pv = (fun (_ : pv_info) -> ()) }
 ;;
 
+let killer_is_usable pos hash_move move =
+  T.move_is_ok move
+  && (not (Option.value_map hash_move ~default:false ~f:(T.equal_move move)))
+  && (not (P.is_capture pos move))
+  && (not (T.is_promotion move))
+  && P.pseudo_legal pos move
+  && P.legal pos move
+;;
+
+let move_in_list moves target = List.exists moves ~f:(T.equal_move target)
+
+let get_good_captures picker =
+  match picker.good_captures with
+  | Some moves -> moves
+  | None ->
+    let moves =
+      generate_moves picker.pos
+      |> List.filter ~f:(fun move ->
+        P.is_capture picker.pos move && (T.is_promotion move || P.see_ge picker.pos move 1))
+      |> ordered_moves_by_score ~score:(capture_order_score picker.pos)
+    in
+    picker.good_captures <- Some moves;
+    moves
+;;
+
+let get_quiets picker =
+  match picker.quiets with
+  | Some moves -> moves
+  | None ->
+    let good_captures = get_good_captures picker in
+    let moves =
+      generate_moves picker.pos
+      |> List.filter ~f:(fun move -> not (P.is_capture picker.pos move))
+      |> List.filter ~f:(fun move ->
+        (not (move_in_list good_captures move))
+        && (not (List.exists picker.killer_moves ~f:(T.equal_move move)))
+        && not (Option.value_map picker.hash_move ~default:false ~f:(T.equal_move move)))
+      |> ordered_moves_by_score ~score:(fun move ->
+        History.get picker.history_tbl move (P.moved_piece_exn picker.pos move))
+    in
+    picker.quiets <- Some moves;
+    moves
+;;
+
+let get_bad_captures picker =
+  match picker.bad_captures with
+  | Some moves -> moves
+  | None ->
+    let good_captures = get_good_captures picker in
+    let moves =
+      generate_moves picker.pos
+      |> List.filter ~f:(fun move ->
+        P.is_capture picker.pos move
+        && not (T.is_promotion move || P.see_ge picker.pos move 1))
+      |> List.filter ~f:(fun move ->
+        (not (move_in_list good_captures move))
+        && not (Option.value_map picker.hash_move ~default:false ~f:(T.equal_move move)))
+      |> ordered_moves_by_score ~score:(fun move ->
+        -2000000 + capture_order_score picker.pos move)
+    in
+    picker.bad_captures <- Some moves;
+    moves
+;;
+
+let refill_move_picker picker =
+  match picker.stage with
+  | Stage_hash ->
+    picker.stage <- Stage_good_captures;
+    picker.stage_moves <- Option.to_list picker.hash_move
+  | Stage_good_captures ->
+    picker.stage <- Stage_killers;
+    picker.stage_moves <- get_good_captures picker
+  | Stage_killers ->
+    picker.stage <- Stage_quiets;
+    picker.stage_moves
+    <- List.filter picker.killer_moves ~f:(killer_is_usable picker.pos picker.hash_move)
+  | Stage_quiets ->
+    picker.stage <- Stage_bad_captures;
+    picker.stage_moves <- get_quiets picker
+  | Stage_bad_captures ->
+    picker.stage <- Stage_done;
+    picker.stage_moves <- get_bad_captures picker
+  | Stage_done -> picker.stage_moves <- []
+;;
+
+let rec next_move picker =
+  match picker.stage_moves with
+  | move :: rest ->
+    picker.stage_moves <- rest;
+    Some move
+  | [] ->
+    if Poly.(picker.stage = Stage_done)
+    then None
+    else (
+      refill_move_picker picker;
+      next_move picker)
+;;
+
+let mk_move_picker pos ~history_tbl ~hash_move ~killer_moves =
+  { pos
+  ; history_tbl
+  ; hash_move
+  ; killer_moves
+  ; stage = Stage_hash
+  ; good_captures = None
+  ; quiets = None
+  ; bad_captures = None
+  ; stage_moves = []
+  }
+;;
+
 let pv_from_tt (pos : P.t) tt max_len =
   (* TODO: Build PV from search return instead of TT. *)
   let rec loop pos acc remaining =
@@ -149,48 +319,26 @@ let rec qsearch pos alpha beta is_white ply history ~stats ~qdepth =
   else (
     let moves =
       if in_check
-      then List.map (M.generate_legal pos) ~f:(fun m -> m, true, true, false)
+      then generate_moves pos
       else
-        M.generate M.CAPTURES pos
-        |> List.filter ~f:(fun m ->
-          P.legal pos m && not (T.equal_move_type (T.get_move_type m) T.CASTLING))
-        |> List.filter_map ~f:(fun m ->
-          if P.is_capture_stage pos m
-          then (
-            (* SEE prune losing captures; queen promotions are part of the capture stage. *)
-            let is_good_capture = T.is_promotion m || P.see_ge pos m 1 in
-            if is_good_capture
-            then (
-              let capture_value =
-                match P.piece_on pos (T.move_dst m) with
-                | Some p -> T.piece_value p
-                | None -> 0
-              in
-              if stand_pat + capture_value + qsearch_delta_margin <= alpha
-              then None
-              else Some (m, true, is_good_capture, false))
-            else None)
-          else None)
+        M.fold_legal_stage pos M.Good_captures ~init:[] ~f:(fun acc m ->
+          let capture_value =
+            match P.piece_on pos (T.move_dst m) with
+            | Some p -> T.piece_value p
+            | None -> 0
+          in
+          if stand_pat + capture_value + qsearch_delta_margin <= alpha
+          then acc
+          else m :: acc)
     in
     if List.is_empty moves
     then if in_check then -(T.value_mate - ply) else alpha
     else (
       let sorted_moves =
-        List.map moves ~f:(fun (m, is_capture, is_good_capture, gives_check) ->
-          let score =
-            if is_capture
-            then (
-              let capture_score = capture_order_score pos m in
-              if is_good_capture
-              then 2000000 + capture_score
-              else -2000000 + capture_score)
-            else if gives_check
-            then 1000000
-            else 0
-          in
-          m, score)
-        |> List.sort ~compare:(fun (_, v1) (_, v2) -> compare v2 v1)
-        |> List.map ~f:fst
+        ordered_moves_by_score moves ~score:(fun m ->
+          if in_check
+          then 2000000 + capture_order_score pos m
+          else 2000000 + capture_order_score pos m)
       in
       let rec loop alpha = function
         | [] -> alpha
@@ -214,26 +362,6 @@ let rec qsearch pos alpha beta is_white ply history ~stats ~qdepth =
           else loop (Int.max alpha score) rest
       in
       loop alpha sorted_moves))
-;;
-
-let pick_next_move scored_moves start_idx =
-  let len = Array.length scored_moves in
-  let rec loop idx best_idx best_score =
-    if idx >= len
-    then best_idx
-    else (
-      let _, score = scored_moves.(idx) in
-      if score > best_score
-      then loop (idx + 1) idx score
-      else loop (idx + 1) best_idx best_score)
-  in
-  let _, start_score = scored_moves.(start_idx) in
-  let best_idx = loop (start_idx + 1) start_idx start_score in
-  if best_idx <> start_idx
-  then (
-    let tmp = scored_moves.(start_idx) in
-    scored_moves.(start_idx) <- scored_moves.(best_idx);
-    scored_moves.(best_idx) <- tmp)
 ;;
 
 let rec pvSearch
@@ -516,80 +644,63 @@ let rec pvSearch
       (match maybe_attempt_nmp pos with
        | Some score -> score
        | _ ->
-         let legal_moves = M.generate_legal pos in
-         if List.is_empty legal_moves
-         then
-           (* Either draw or mate *)
-           if P.is_in_check pos then -(T.value_mate - curr_ply) else T.value_draw
-         else (
-           (* Move ordering (hash move would already have been tested before move generation) *)
-           (* 1. Good captures - score 2000000 *)
-           (* 2. Killer moves - 1500000  *)
-           (* 4. Quiet moves - from history *)
-           (* 3. Bad captures - -2000000 *)
-           let killer_moves = K.get_killers killers ply in
-           let scored_moves =
-             List.map legal_moves ~f:(fun m ->
-               let is_capture = P.is_capture pos m in
-               let score =
-                 if is_capture
-                 then
-                   if P.see_ge pos m 1
-                   then 2000000 + capture_order_score pos m
-                   else -2000000 (* Bad captures last *)
-                 else if List.find killer_moves ~f:(T.equal_move m) |> Option.is_some
-                 then 1500000
-                 else
-                   (* History score for quiet moves *)
-                   History.get history_tbl m (P.moved_piece_exn pos m)
-               in
-               m, score)
-             |> Array.of_list
-           in
-           let rec loop idx acc =
-             if idx >= Array.length scored_moves
-             then (
-               let a, b, _, i = acc in
-               a, b, false, i)
-             else (
-               pick_next_move scored_moves idx;
-               let move, _ = scored_moves.(idx) in
-               match do_move [] acc move with
-               | Continue_or_stop.Continue next_acc -> loop (idx + 1) next_acc
-               | Continue_or_stop.Stop (score, best_move, _, next_idx) ->
-                 score, best_move, true, next_idx)
-           in
-           let score, best_move, is_cut, _ =
-             loop 0 (alpha, None, not found_hash_move, 0)
-           in
-           if (not is_cut) && score <= alpha_orig
-           then stats.fail_low <- stats.fail_low + 1;
-           if not is_cut
-           then (
-             match best_move, is_null_window with
-             | Some m, false ->
-               ignore
-               @@ TT.store
-                    tt
-                    ~key:(P.key pos)
-                    ~m
-                    ~depth:remaining_depth
-                    ~eval_value
-                    ~value:(value_to_tt score curr_ply)
-                    ~bound:TT.BOUND_EXACT
-             | None, _ ->
-               (* It's fine to set an upper bound even if we are doing a null move search *)
-               ignore
-               @@ TT.store
-                    tt
-                    ~key:(P.key pos)
-                    ~m:T.none_move
-                    ~depth:remaining_depth
-                    ~eval_value
-                    ~value:(value_to_tt score curr_ply)
-                    ~bound:TT.BOUND_UPPER
-             | _ -> ());
-           score)))
+         let hash_move = None in
+         let move_picker =
+           mk_move_picker
+             pos
+             ~history_tbl
+             ~hash_move
+             ~killer_moves:(K.get_killers killers ply)
+         in
+         (match next_move move_picker with
+          | None ->
+            (* Either draw or mate *)
+            if P.is_in_check pos then -(T.value_mate - curr_ply) else T.value_draw
+          | Some first_move ->
+            let rec loop_moves acc current_move =
+              match do_move [] acc current_move with
+              | Continue_or_stop.Continue next_acc ->
+                (match next_move move_picker with
+                 | None ->
+                   let a, b, _, i = next_acc in
+                   a, b, false, i
+                 | Some move -> loop_moves next_acc move)
+              | Continue_or_stop.Stop (score, best_move, _, next_idx) ->
+                score, best_move, true, next_idx
+            in
+            let score, best_move, is_cut, _ =
+              loop_moves
+                (alpha, None, not found_hash_move, if found_hash_move then 1 else 0)
+                first_move
+            in
+            if (not is_cut) && score <= alpha_orig
+            then stats.fail_low <- stats.fail_low + 1;
+            if not is_cut
+            then (
+              match best_move, is_null_window with
+              | Some m, false ->
+                ignore
+                @@ TT.store
+                     tt
+                     ~key:(P.key pos)
+                     ~m
+                     ~depth:remaining_depth
+                     ~eval_value
+                     ~value:(value_to_tt score curr_ply)
+                     ~bound:TT.BOUND_EXACT
+              | None, _ ->
+                (* It's fine to set an upper bound even if we are doing a null move search *)
+                ignore
+                @@ TT.store
+                     tt
+                     ~key:(P.key pos)
+                     ~m:T.none_move
+                     ~depth:remaining_depth
+                     ~eval_value
+                     ~value:(value_to_tt score curr_ply)
+                     ~bound:TT.BOUND_UPPER
+              | _ -> ());
+            score)))
 ;;
 
 let get_best_move ?(instrumentation = default_instrumentation) (pos : P.t) max_depth

@@ -16,6 +16,12 @@ module MoveGen = struct
     | LEGAL (* Generates all the legal moves in the given position *)
   [@@deriving eq]
 
+  type legal_stage =
+    | Good_captures
+    | Killers of Types.move list
+    | Quiets
+    | Bad_captures
+
   (* type move_list = Types.move list *)
 
   (* `enemy` means that we are capturing a piece while promoting *)
@@ -391,6 +397,53 @@ module MoveGen = struct
       else generate NON_EVASIONS pos
     in
     List.filter move_list ~f:is_legal
+
+  and fold_legal_stage pos stage ~init ~f =
+    let us = P.side_to_move pos in
+    let pinned = P.blockers_for_king pos us |> BB.bb_and @@ P.pieces_of_colour pos us in
+    let king_sq = P.square_of_pt_and_colour pos Types.KING us in
+    let is_legal m =
+      let src_sq = Types.move_src m in
+      not
+      @@ (((BB.bb_not_zero @@ BB.sq_and_bb src_sq pinned)
+           || Types.equal_square src_sq king_sq
+           || Types.equal_move_type (Types.get_move_type m) Types.EN_PASSANT)
+          && not (P.legal pos m))
+    in
+    let fold_moves moves ~init ~f =
+      List.fold moves ~init ~f:(fun acc move -> if is_legal move then f acc move else acc)
+    in
+    let quiets, captures =
+      if BB.bb_not_zero @@ P.checkers pos
+      then [], generate EVASIONS pos
+      else (
+        let captures = generate CAPTURES pos in
+        let quiets =
+          generate QUIETS pos
+          |> List.filter ~f:(fun move ->
+            not (Types.equal_move_type (Types.get_move_type move) Types.CASTLING))
+        in
+        quiets, captures)
+    in
+    let seen_quiets = Hashtbl.create (module Int) ~size:(List.length quiets) in
+    List.iter quiets ~f:(fun move -> Hashtbl.set seen_quiets ~key:move.data ~data:());
+    match stage with
+    | Good_captures ->
+      fold_moves captures ~init ~f:(fun acc move ->
+        if P.is_capture_stage pos move && (Types.is_promotion move || P.see_ge pos move 1)
+        then f acc move
+        else acc)
+    | Killers killer_moves ->
+      fold_moves killer_moves ~init ~f:(fun acc move ->
+        if Hashtbl.mem seen_quiets move.data then f acc move else acc)
+    | Quiets -> fold_moves quiets ~init ~f
+    | Bad_captures ->
+      fold_moves captures ~init ~f:(fun acc move ->
+        if
+          P.is_capture_stage pos move
+          && not (Types.is_promotion move || P.see_ge pos move 1)
+        then f acc move
+        else acc)
 
   and generate gt pos =
     match gt with
