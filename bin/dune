@@ -2,3 +2,7 @@
  (public_name requin_ocaml)
  (name main)
  (libraries requin))
+
+(executable
+ (name bench)
+ (libraries requin))

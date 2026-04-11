@@ -19,7 +19,12 @@ let qsearch_check_depth = 2
 let qsearch_delta_margin = T.queen_value + T.pawn_value
 let lmr_depth_threshold = 3
 let lmr_move_threshold = 3
-let lmr_reduction = 1
+
+let lmr_reduction remaining_depth move_index =
+  let depth_bonus = Int.max 0 ((remaining_depth - lmr_depth_threshold) / 2) in
+  let move_bonus = Int.max 0 ((move_index - lmr_move_threshold) / 4) in
+  Int.min (remaining_depth - 1) (1 + depth_bonus + move_bonus)
+;;
 
 let lmp_move_threshold = function
   | 1 -> 4
@@ -571,7 +576,7 @@ let rec pvSearch
                   move
                   alpha
                   (alpha + 1)
-                  lmr_reduction
+                  (lmr_reduction remaining_depth idx)
                   ~is_null_window:true
                   ~is_pv:false
               in
