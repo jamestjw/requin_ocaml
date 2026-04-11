@@ -143,6 +143,15 @@ let handle_setoption state args =
   state
 ;;
 
+let format_uci_score score =
+  if Int.abs score > T.value_mate_in_max_ply
+  then (
+    let mate_plies = T.value_mate - Int.abs score in
+    let mate_moves = (mate_plies + 1) / 2 in
+    Printf.sprintf "score mate %d" (if score > 0 then mate_moves else -mate_moves))
+  else Printf.sprintf "score cp %d" score
+;;
+
 let handle_go { pos; max_depth } args =
   let rec parse_args config args =
     match args with
@@ -163,9 +172,9 @@ let handle_go { pos; max_depth } args =
       ->
       send_response
         (Printf.sprintf
-           "info depth %d score cp %d nodes %d nps %d tthit %d cut %d pv %s"
+           "info depth %d %s nodes %d nps %d tthit %d cut %d pv %s"
            depth
-           score
+           (format_uci_score score)
            nodes
            nps
            tthit
