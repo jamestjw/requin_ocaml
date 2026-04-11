@@ -109,6 +109,9 @@ type stats =
   ; mutable lmr_attempts : int
   ; mutable lmr_reruns : int
   ; mutable lmr_improving_moves : int
+  ; search_fail_high_stage : int array
+  ; search_fail_high_index : int array
+  ; search_fail_high_depth : int array
   }
 
 type info =
@@ -120,6 +123,9 @@ type info =
   ; cut : int
   ; lmr : int
   ; lmr_re : int
+  ; fh_stage : int array
+  ; fh_index : int array
+  ; fh_depth : int array
   }
 
 type pv_info =
@@ -152,8 +158,68 @@ type move_picker =
   ; mutable good_captures : T.move list option
   ; mutable quiets : T.move list option
   ; mutable bad_captures : T.move list option
+  ; mutable current_stage : move_stage
   ; mutable stage_moves : T.move list
   }
+
+let searchable_stage_count = 6
+
+let move_stage_to_index = function
+  | Stage_hash -> 0
+  | Stage_evasions -> 1
+  | Stage_good_captures -> 2
+  | Stage_killers -> 3
+  | Stage_quiets -> 4
+  | Stage_bad_captures -> 5
+  | Stage_done -> invalid_arg "Stage_done has no fail-high bucket"
+;;
+
+let move_stage_name = function
+  | Stage_hash -> "hash"
+  | Stage_evasions -> "evasions"
+  | Stage_good_captures -> "good_caps"
+  | Stage_killers -> "killers"
+  | Stage_quiets -> "quiets"
+  | Stage_bad_captures -> "bad_caps"
+  | Stage_done -> "done"
+;;
+
+let fail_high_index_bucket_count = 6
+
+let fail_high_index_bucket idx =
+  if idx <= 0
+  then 0
+  else if idx = 1
+  then 1
+  else if idx = 2
+  then 2
+  else if idx <= 4
+  then 3
+  else if idx <= 8
+  then 4
+  else 5
+;;
+
+let fail_high_index_bucket_name = function
+  | 0 -> "0"
+  | 1 -> "1"
+  | 2 -> "2"
+  | 3 -> "3-4"
+  | 4 -> "5-8"
+  | 5 -> "9+"
+  | _ -> invalid_arg "unknown fail-high index bucket"
+;;
+
+let record_search_fail_high stats stage idx remaining_depth =
+  stats.search_fail_high_stage.(move_stage_to_index stage)
+  <- stats.search_fail_high_stage.(move_stage_to_index stage) + 1;
+  let index_bucket = fail_high_index_bucket idx in
+  stats.search_fail_high_index.(index_bucket)
+  <- stats.search_fail_high_index.(index_bucket) + 1;
+  let depth_bucket = Int.min remaining_depth T.max_ply in
+  stats.search_fail_high_depth.(depth_bucket)
+  <- stats.search_fail_high_depth.(depth_bucket) + 1
+;;
 
 let mk_stats () =
   { nodes = 0
@@ -173,6 +239,9 @@ let mk_stats () =
   ; lmr_attempts = 0
   ; lmr_reruns = 0
   ; lmr_improving_moves = 0
+  ; search_fail_high_stage = Array.create ~len:searchable_stage_count 0
+  ; search_fail_high_index = Array.create ~len:fail_high_index_bucket_count 0
+  ; search_fail_high_depth = Array.create ~len:(T.max_ply + 1) 0
   }
 ;;
 
@@ -194,6 +263,12 @@ let merge_stats (acc : stats) (s : stats) =
   acc.lmr_attempts <- acc.lmr_attempts + s.lmr_attempts;
   acc.lmr_reruns <- acc.lmr_reruns + s.lmr_reruns;
   acc.lmr_improving_moves <- acc.lmr_improving_moves + s.lmr_improving_moves;
+  Array.iteri s.search_fail_high_stage ~f:(fun idx count ->
+    acc.search_fail_high_stage.(idx) <- acc.search_fail_high_stage.(idx) + count);
+  Array.iteri s.search_fail_high_index ~f:(fun idx count ->
+    acc.search_fail_high_index.(idx) <- acc.search_fail_high_index.(idx) + count);
+  Array.iteri s.search_fail_high_depth ~f:(fun idx count ->
+    acc.search_fail_high_depth.(idx) <- acc.search_fail_high_depth.(idx) + count);
   acc
 ;;
 
@@ -309,31 +384,39 @@ let refill_move_picker picker =
   match picker.stage with
   | Stage_hash ->
     picker.stage <- (if picker.in_check then Stage_evasions else Stage_good_captures);
+    picker.current_stage <- Stage_hash;
     picker.stage_moves <- Option.to_list picker.hash_move
   | Stage_evasions ->
     picker.stage <- Stage_done;
+    picker.current_stage <- Stage_evasions;
     picker.stage_moves <- get_evasions picker
   | Stage_good_captures ->
     picker.stage <- Stage_killers;
+    picker.current_stage <- Stage_good_captures;
     picker.stage_moves <- get_good_captures picker
   | Stage_killers ->
     picker.stage <- Stage_quiets;
+    picker.current_stage <- Stage_killers;
     picker.stage_moves
     <- List.filter picker.killer_moves ~f:(killer_is_usable picker.pos picker.hash_move)
   | Stage_quiets ->
     picker.stage <- Stage_bad_captures;
+    picker.current_stage <- Stage_quiets;
     picker.stage_moves <- get_quiets picker
   | Stage_bad_captures ->
     picker.stage <- Stage_done;
+    picker.current_stage <- Stage_bad_captures;
     picker.stage_moves <- get_bad_captures picker
-  | Stage_done -> picker.stage_moves <- []
+  | Stage_done ->
+    picker.current_stage <- Stage_done;
+    picker.stage_moves <- []
 ;;
 
 let rec next_move picker =
   match picker.stage_moves with
   | move :: rest ->
     picker.stage_moves <- rest;
-    Some move
+    Some (picker.current_stage, move)
   | [] ->
     if Poly.(picker.stage = Stage_done)
     then None
@@ -353,6 +436,7 @@ let mk_move_picker pos ~history_tbl ~hash_move ~killer_moves =
   ; good_captures = None
   ; quiets = None
   ; bad_captures = None
+  ; current_stage = Stage_done
   ; stage_moves = []
   }
 ;;
@@ -551,7 +635,7 @@ let rec pvSearch
   in
   let is_in_check = P.is_in_check pos in
   let alpha_orig = alpha in
-  let do_move quiet_moves (alpha, best_move, is_first_move, idx) move =
+  let do_move quiet_moves (alpha, best_move, is_first_move, idx) stage move =
     let is_quiet = not (P.is_capture pos move || T.is_promotion move) in
     let can_lmp =
       (* Skip very late quiet moves in shallow non-PV null-window nodes 
@@ -621,6 +705,7 @@ let rec pvSearch
       then (
         stats.cutoffs <- stats.cutoffs + 1;
         stats.fail_high <- stats.fail_high + 1;
+        record_search_fail_high stats stage idx remaining_depth;
         stats.cutoff_index_sum <- stats.cutoff_index_sum + idx;
         stats.cutoff_count <- stats.cutoff_count + 1;
         if is_first_move then stats.first_move_cutoffs <- stats.first_move_cutoffs + 1;
@@ -649,8 +734,8 @@ let rec pvSearch
       then Continue_or_stop.Continue (alpha, best_move, false, idx + 1)
       else Continue_or_stop.Continue (alpha, best_move, false, idx + 1))
   in
-  let do_move' alpha move ~is_first_move ~idx =
-    match do_move [] (alpha, None, is_first_move, idx) move with
+  let do_move' alpha stage move ~is_first_move ~idx =
+    match do_move [] (alpha, None, is_first_move, idx) stage move with
     | Continue_or_stop.Continue (score, m, _, _) -> score, m, false
     | Continue_or_stop.Stop (score, m, cut, _) -> score, m, cut
   in
@@ -691,7 +776,9 @@ let rec pvSearch
        | _, (TT.BOUND_EXACT | TT.BOUND_LOWER)
          when T.move_not_none tt_entry.move && P.legal pos tt_entry.move ->
          (* Search hash move *)
-         let score, _, is_cut = do_move' alpha tt_entry.move ~is_first_move:true ~idx:0 in
+         let score, _, is_cut =
+           do_move' alpha Stage_hash tt_entry.move ~is_first_move:true ~idx:0
+         in
          if is_cut then Some score, alpha, true else None, score, true
        | _, _ -> score, alpha, false)
     | None -> None, alpha, false
@@ -744,21 +831,22 @@ let rec pvSearch
           | None ->
             (* Either draw or mate *)
             if P.is_in_check pos then -(T.value_mate - curr_ply) else T.value_draw
-          | Some first_move ->
-            let rec loop_moves acc current_move =
-              match do_move [] acc current_move with
+          | Some (first_stage, first_move) ->
+            let rec loop_moves acc current_stage current_move =
+              match do_move [] acc current_stage current_move with
               | Continue_or_stop.Continue next_acc ->
                 (match next_move move_picker with
                  | None ->
                    let a, b, _, i = next_acc in
                    a, b, false, i
-                 | Some move -> loop_moves next_acc move)
+                 | Some (stage, move) -> loop_moves next_acc stage move)
               | Continue_or_stop.Stop (score, best_move, _, next_idx) ->
                 score, best_move, true, next_idx
             in
             let score, best_move, is_cut, _ =
               loop_moves
                 (alpha, None, not found_hash_move, if found_hash_move then 1 else 0)
+                first_stage
                 first_move
             in
             if (not is_cut) && score <= alpha_orig
@@ -893,6 +981,9 @@ let get_best_move ?(instrumentation = default_instrumentation) (pos : P.t) max_d
           ; cut
           ; lmr = stats.lmr_attempts
           ; lmr_re = stats.lmr_reruns
+          ; fh_stage = Array.copy stats.search_fail_high_stage
+          ; fh_index = Array.copy stats.search_fail_high_index
+          ; fh_depth = Array.copy stats.search_fail_high_depth
           };
         (* Seed PV with the root best move since TT entries at the root can be
            missing (e.g., upper-bound stores use none_move). *)
