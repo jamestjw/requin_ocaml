@@ -624,7 +624,10 @@ let rec pvSearch
         stats.cutoff_index_sum <- stats.cutoff_index_sum + idx;
         stats.cutoff_count <- stats.cutoff_count + 1;
         if is_first_move then stats.first_move_cutoffs <- stats.first_move_cutoffs + 1;
-        if T.move_is_ok move && is_quiet
+        if
+          T.move_is_ok move
+          && is_quiet
+          && not (T.equal_move_type (T.get_move_type move) T.CASTLING)
         then (
           K.add_killer killers ply move;
           History.update history_tbl move remaining_depth (P.moved_piece_exn pos move);
