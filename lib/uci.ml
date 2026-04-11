@@ -168,8 +168,8 @@ let handle_go { pos; max_depth } args =
     let { S.depth; S.pv } = pv_info in
     let pv_str = String.concat ~sep:" " @@ List.map pv ~f:T.show_move in
     match !last_info with
-    | Some { depth = info_depth; score; nodes; nps; tthit; cut } when info_depth = depth
-      ->
+    | Some { depth = info_depth; score; nodes; nps; tthit; cut; _ }
+      when info_depth = depth ->
       send_response
         (Printf.sprintf
            "info depth %d %s nodes %d nps %d tthit %d cut %d pv %s"

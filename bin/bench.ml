@@ -26,6 +26,22 @@ let bench_cases =
     ; fen = "3r2k1/2P2p1p/4p1p1/8/3b1Q2/8/3p1RPP/3q1BK1 b - - 0 1"
     ; depth = 5
     }
+  ; { name = "italian_center"
+    ; fen = "r1bq1rk1/ppp2ppp/2n2n2/3pp3/2BPP3/2P2N2/PP3PPP/RNBQ1RK1 w - - 0 8"
+    ; depth = 5
+    }
+  ; { name = "queens_gambit"
+    ; fen = "r2q1rk1/pp2bppp/2np1n2/2p1p3/2P1P3/2NP1N1P/PP2BPP1/R1BQ1RK1 w - - 0 10"
+    ; depth = 5
+    }
+  ; { name = "rook_endgame"
+    ; fen = "8/5pk1/3r2p1/1p1Pp2p/pP2P2P/P3K1P1/5P2/3R4 w - - 0 40"
+    ; depth = 6
+    }
+  ; { name = "minor_piece_endgame"
+    ; fen = "8/2k5/2p2pp1/3p4/3P1P2/2P1P1P1/2K5/8 w - - 0 50"
+    ; depth = 6
+    }
   ]
 ;;
 
@@ -43,13 +59,15 @@ let run_case { name; fen; depth } =
   match !last_info with
   | Some info ->
     Stdlib.Printf.printf
-      "%s depth=%d best=%s score=%d nodes=%d nps=%d time=%.3f\n"
+      "%s depth=%d best=%s score=%d nodes=%d nps=%d lmr=%d lmr_re=%d time=%.3f\n"
       name
       depth
       (Types.Types.show_move best_move)
       info.score
       info.nodes
       info.nps
+      info.lmr
+      info.lmr_re
       elapsed;
     info.nodes, elapsed
   | None -> failwith "benchmark run produced no search info"

@@ -26,6 +26,8 @@ let lmr_reduction remaining_depth move_index =
   Int.min (remaining_depth - 1) (1 + depth_bonus + move_bonus)
 ;;
 
+let history_lmr_bonus history_score = if history_score >= 2000 then 1 else 0
+
 let lmp_move_threshold = function
   | 1 -> 4
   | 2 -> 8
@@ -104,6 +106,9 @@ type stats =
   ; mutable first_move_cutoffs : int
   ; mutable cutoff_index_sum : int
   ; mutable cutoff_count : int
+  ; mutable lmr_attempts : int
+  ; mutable lmr_reruns : int
+  ; mutable lmr_improving_moves : int
   }
 
 type info =
@@ -113,6 +118,8 @@ type info =
   ; nps : int
   ; tthit : int
   ; cut : int
+  ; lmr : int
+  ; lmr_re : int
   }
 
 type pv_info =
@@ -163,6 +170,9 @@ let mk_stats () =
   ; first_move_cutoffs = 0
   ; cutoff_index_sum = 0
   ; cutoff_count = 0
+  ; lmr_attempts = 0
+  ; lmr_reruns = 0
+  ; lmr_improving_moves = 0
   }
 ;;
 
@@ -181,6 +191,9 @@ let merge_stats (acc : stats) (s : stats) =
   acc.first_move_cutoffs <- acc.first_move_cutoffs + s.first_move_cutoffs;
   acc.cutoff_index_sum <- acc.cutoff_index_sum + s.cutoff_index_sum;
   acc.cutoff_count <- acc.cutoff_count + s.cutoff_count;
+  acc.lmr_attempts <- acc.lmr_attempts + s.lmr_attempts;
+  acc.lmr_reruns <- acc.lmr_reruns + s.lmr_reruns;
+  acc.lmr_improving_moves <- acc.lmr_improving_moves + s.lmr_improving_moves;
   acc
 ;;
 
@@ -571,17 +584,30 @@ let rec pvSearch
           let score =
             if can_lmr
             then (
+              stats.lmr_attempts <- stats.lmr_attempts + 1;
+              let history_score =
+                History.get history_tbl move (P.moved_piece_exn pos move)
+              in
+              if history_score >= 2000
+              then stats.lmr_improving_moves <- stats.lmr_improving_moves + 1;
+              let reduction =
+                Int.max
+                  0
+                  (lmr_reduction remaining_depth idx - history_lmr_bonus history_score)
+              in
               let reduced_score =
                 search_with_ply
                   move
                   alpha
                   (alpha + 1)
-                  (lmr_reduction remaining_depth idx)
+                  reduction
                   ~is_null_window:true
                   ~is_pv:false
               in
               if reduced_score > alpha
-              then search move alpha (alpha + 1) ~is_null_window:true ~is_pv:false
+              then (
+                stats.lmr_reruns <- stats.lmr_reruns + 1;
+                search move alpha (alpha + 1) ~is_null_window:true ~is_pv:false)
               else reduced_score)
             else search move alpha (alpha + 1) ~is_null_window:true ~is_pv:false
           in
@@ -862,6 +888,8 @@ let get_best_move ?(instrumentation = default_instrumentation) (pos : P.t) max_d
           ; nps
           ; tthit
           ; cut
+          ; lmr = stats.lmr_attempts
+          ; lmr_re = stats.lmr_reruns
           };
         (* Seed PV with the root best move since TT entries at the root can be
            missing (e.g., upper-bound stores use none_move). *)
