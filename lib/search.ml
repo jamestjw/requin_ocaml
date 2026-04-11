@@ -1,4 +1,5 @@
 open Base
+module BB = Bitboard.Bitboard
 module P = Position.Position
 module M = Movegen.MoveGen
 module T = Types.Types
@@ -31,10 +32,6 @@ let aspiration_window = 100
 let initial_alpha = -T.value_mate - 1
 let initial_beta = T.value_mate + 1
 let generate_moves pos = M.generate_legal pos
-
-let legal_move_stages killers ply =
-  [ M.Good_captures; M.Killers (K.get_killers killers ply); M.Quiets; M.Bad_captures ]
-;;
 
 let capture_order_score pos move =
   let victim_value =
@@ -120,6 +117,7 @@ type instrumentation =
 
 type move_stage =
   | Stage_hash
+  | Stage_evasions
   | Stage_good_captures
   | Stage_killers
   | Stage_quiets
@@ -128,10 +126,12 @@ type move_stage =
 
 type move_picker =
   { pos : P.t
+  ; in_check : bool
   ; history_tbl : History.t
   ; hash_move : T.move option
   ; killer_moves : T.move list
   ; mutable stage : move_stage
+  ; mutable evasions : T.move list option
   ; mutable good_captures : T.move list option
   ; mutable quiets : T.move list option
   ; mutable bad_captures : T.move list option
@@ -189,18 +189,74 @@ let killer_is_usable pos hash_move move =
 
 let move_in_list moves target = List.exists moves ~f:(T.equal_move target)
 
-let get_good_captures picker =
-  match picker.good_captures with
+let is_legal_generated_move pos =
+  let us = P.side_to_move pos in
+  let pinned = P.blockers_for_king pos us |> BB.bb_and @@ P.pieces_of_colour pos us in
+  let king_sq = P.square_of_pt_and_colour pos T.KING us in
+  fun move ->
+    let src_sq = T.move_src move in
+    not
+    @@ (((BB.bb_not_zero @@ BB.sq_and_bb src_sq pinned)
+         || T.equal_square src_sq king_sq
+         || T.equal_move_type (T.get_move_type move) T.EN_PASSANT)
+        && not (P.legal pos move))
+;;
+
+let generated_capture_moves pos =
+  let is_legal = is_legal_generated_move pos in
+  assert (not (BB.bb_not_zero @@ P.checkers pos));
+  M.generate M.CAPTURES pos |> List.filter ~f:is_legal
+;;
+
+let generated_quiet_moves pos =
+  generate_moves pos |> List.filter ~f:(fun move -> not (P.is_capture pos move))
+;;
+
+let get_evasions picker =
+  match picker.evasions with
   | Some moves -> moves
   | None ->
     let moves =
       generate_moves picker.pos
       |> List.filter ~f:(fun move ->
-        P.is_capture picker.pos move && (T.is_promotion move || P.see_ge picker.pos move 1))
-      |> ordered_moves_by_score ~score:(capture_order_score picker.pos)
+        not (Option.value_map picker.hash_move ~default:false ~f:(T.equal_move move)))
+      |> ordered_moves_by_score ~score:(fun move ->
+        if P.is_capture picker.pos move
+        then
+          if T.is_promotion move || P.see_ge picker.pos move 1
+          then 2000000 + capture_order_score picker.pos move
+          else -2000000 + capture_order_score picker.pos move
+        else History.get picker.history_tbl move (P.moved_piece_exn picker.pos move))
     in
-    picker.good_captures <- Some moves;
+    picker.evasions <- Some moves;
     moves
+;;
+
+let populate_capture_buckets picker =
+  match picker.good_captures, picker.bad_captures with
+  | Some _, Some _ -> ()
+  | _ ->
+    let good_captures, bad_captures =
+      generated_capture_moves picker.pos
+      |> List.fold ~init:([], []) ~f:(fun (good_acc, bad_acc) move ->
+        if P.is_capture_stage picker.pos move
+        then
+          if T.is_promotion move || P.see_ge picker.pos move 1
+          then move :: good_acc, bad_acc
+          else good_acc, move :: bad_acc
+        else good_acc, bad_acc)
+    in
+    picker.good_captures
+    <- Some (ordered_moves_by_score good_captures ~score:(capture_order_score picker.pos));
+    picker.bad_captures
+    <- Some
+         (ordered_moves_by_score bad_captures ~score:(fun move ->
+            -2000000 + capture_order_score picker.pos move))
+;;
+
+let get_good_captures picker =
+  populate_capture_buckets picker;
+  Option.value_exn picker.good_captures
 ;;
 
 let get_quiets picker =
@@ -209,8 +265,7 @@ let get_quiets picker =
   | None ->
     let good_captures = get_good_captures picker in
     let moves =
-      generate_moves picker.pos
-      |> List.filter ~f:(fun move -> not (P.is_capture picker.pos move))
+      generated_quiet_moves picker.pos
       |> List.filter ~f:(fun move ->
         (not (move_in_list good_captures move))
         && (not (List.exists picker.killer_moves ~f:(T.equal_move move)))
@@ -223,30 +278,18 @@ let get_quiets picker =
 ;;
 
 let get_bad_captures picker =
-  match picker.bad_captures with
-  | Some moves -> moves
-  | None ->
-    let good_captures = get_good_captures picker in
-    let moves =
-      generate_moves picker.pos
-      |> List.filter ~f:(fun move ->
-        P.is_capture picker.pos move
-        && not (T.is_promotion move || P.see_ge picker.pos move 1))
-      |> List.filter ~f:(fun move ->
-        (not (move_in_list good_captures move))
-        && not (Option.value_map picker.hash_move ~default:false ~f:(T.equal_move move)))
-      |> ordered_moves_by_score ~score:(fun move ->
-        -2000000 + capture_order_score picker.pos move)
-    in
-    picker.bad_captures <- Some moves;
-    moves
+  populate_capture_buckets picker;
+  Option.value_exn picker.bad_captures
 ;;
 
 let refill_move_picker picker =
   match picker.stage with
   | Stage_hash ->
-    picker.stage <- Stage_good_captures;
+    picker.stage <- (if picker.in_check then Stage_evasions else Stage_good_captures);
     picker.stage_moves <- Option.to_list picker.hash_move
+  | Stage_evasions ->
+    picker.stage <- Stage_done;
+    picker.stage_moves <- get_evasions picker
   | Stage_good_captures ->
     picker.stage <- Stage_killers;
     picker.stage_moves <- get_good_captures picker
@@ -278,10 +321,12 @@ let rec next_move picker =
 
 let mk_move_picker pos ~history_tbl ~hash_move ~killer_moves =
   { pos
+  ; in_check = P.is_in_check pos
   ; history_tbl
   ; hash_move
   ; killer_moves
   ; stage = Stage_hash
+  ; evasions = None
   ; good_captures = None
   ; quiets = None
   ; bad_captures = None
@@ -321,15 +366,19 @@ let rec qsearch pos alpha beta is_white ply history ~stats ~qdepth =
       if in_check
       then generate_moves pos
       else
-        M.fold_legal_stage pos M.Good_captures ~init:[] ~f:(fun acc m ->
-          let capture_value =
-            match P.piece_on pos (T.move_dst m) with
+        generate_moves pos
+        |> List.filter ~f:(fun move ->
+          match T.get_ppt move with
+          | Some T.QUEEN -> true
+          | Some _ -> false
+          | None -> P.is_capture pos move && P.see_ge pos move 1)
+        |> List.filter ~f:(fun move ->
+          let move_gain =
+            match P.piece_on pos (T.move_dst move) with
             | Some p -> T.piece_value p
-            | None -> 0
+            | None -> if T.is_promotion move then T.queen_value else 0
           in
-          if stand_pat + capture_value + qsearch_delta_margin <= alpha
-          then acc
-          else m :: acc)
+          stand_pat + move_gain + qsearch_delta_margin > alpha)
     in
     if List.is_empty moves
     then if in_check then -(T.value_mate - ply) else alpha
