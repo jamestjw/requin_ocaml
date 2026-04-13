@@ -82,6 +82,22 @@ let bench_cases =
     ; fen = "r3k2r/pppq1ppp/2npbn2/4p3/2B1P3/2NP1N2/PPP2PPP/R1BQ1RK1 w kq - 2 9"
     ; depth = 5
     }
+  ; { name = "sicilian_pressure"
+    ; fen = "r2q1rk1/pp2bppp/2npbn2/2p1p3/2P1P3/2NPBN2/PPQ2PPP/R4RK1 w - - 0 11"
+    ; depth = 5
+    }
+  ; { name = "kingside_attack"
+    ; fen = "r1bq1rk1/pp1n1ppp/2pbpn2/3p4/3P4/2NBPN2/PPQ2PPP/R1B2RK1 w - - 0 9"
+    ; depth = 5
+    }
+  ; { name = "iqp_middlegame"
+    ; fen = "r2q1rk1/pp2bppp/2n2n2/2pp4/3P4/2P1PN2/PP1N1PPP/R1BQ1RK1 w - - 0 10"
+    ; depth = 5
+    }
+  ; { name = "heavy_piece_tactics"
+    ; fen = "2r2rk1/pp1n1ppp/2p1pn2/q2p4/3P4/2NBPN2/PPQ2PPP/2RR2K1 w - - 0 14"
+    ; depth = 5
+    }
   ]
 ;;
 
