@@ -1,14 +1,15 @@
 name: check
 
-# Controls when the workflow will run
-on: push
+on:
+  push:
+  pull_request:
 
 jobs:
-  check:
+  ci:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Set-up OCaml
         uses: ocaml/setup-ocaml@v3
@@ -20,23 +21,11 @@ jobs:
       - name: "Install dependencies"
         run: opam exec -- opam install . --deps-only --with-test
 
+      - name: "Check formatting"
+        run: opam exec -- dune fmt --auto-promote && git diff --exit-code
+
       - name: "Build application"
         run: opam exec -- dune build
 
       - name: "Run tests"
         run: opam exec -- dune runtest
-
-  lint:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout tree
-        uses: actions/checkout@v5
-
-      - name: Set-up OCaml
-        uses: ocaml/setup-ocaml@v3
-        with:
-          ocaml-compiler: 5.2.x
-          opam-disable-sandboxing: true
-          dune-cache: true
-
-      - uses: ocaml/setup-ocaml/lint-fmt@v3
