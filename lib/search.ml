@@ -745,6 +745,8 @@ let rec pvSearch
   let process_tt_entry depth (tt_entry : TT.entry option) alpha =
     match tt_entry with
     | Some tt_entry ->
+      (* TODO: Unify TT hash-move handling with the main move loop so the move picker
+         is the single path responsible for searching ordered moves. *)
       stats.tt_hits <- stats.tt_hits + 1;
       if tt_entry.depth >= depth
       then (
@@ -820,7 +822,15 @@ let rec pvSearch
       (match maybe_attempt_nmp pos with
        | Some score -> score
        | _ ->
-         let hash_move = None in
+         let hash_move =
+           if found_hash_move
+           then None
+           else
+             Option.bind tt_entry ~f:(fun entry ->
+               if T.move_not_none entry.move && P.legal pos entry.move
+               then Some entry.move
+               else None)
+         in
          let move_picker =
            mk_move_picker
              pos

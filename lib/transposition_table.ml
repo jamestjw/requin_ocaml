@@ -60,8 +60,9 @@ let mk () =
 ;;
 
 let cluster_idx { size; _ } key =
-  (* Only take the lower 32 bits *)
-  UInt64.to_uint32 key |> UInt32.(logand @@ of_int (size - 1)) |> UInt32.to_int
+  (* Only take the lower 32 bits. We must use modulo here because the cluster
+     count is not a power of two. *)
+  UInt64.to_uint32 key |> UInt32.to_int |> fun key32 -> Int.rem key32 size
 ;;
 
 (* Overwrites the entire transposition table with zeroes *)
