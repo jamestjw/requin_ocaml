@@ -20,6 +20,8 @@ let qsearch_delta_margin = T.queen_value + T.pawn_value
 let lmr_depth_threshold = 3
 let lmr_move_threshold = 3
 let root_search_ply = 1
+let reverse_futility_margin_1 = T.rook_value
+let reverse_futility_margin_2 = T.rook_value + T.knight_value
 
 let lmr_reduction remaining_depth move_index =
   let depth_bonus = Int.max 0 ((remaining_depth - lmr_depth_threshold) / 2) in
@@ -793,6 +795,20 @@ let rec pvSearch
   then eval_value
   else if remaining_depth <= 0
   then qsearch pos alpha beta is_white ply history ~stats ~qdepth:qsearch_max_depth
+  else if
+    (not is_in_check)
+    && (not is_pv)
+    && remaining_depth = 1
+    && may_prune
+    && eval_value >= beta + reverse_futility_margin_1
+  then beta
+  else if
+    (not is_in_check)
+    && (not is_pv)
+    && remaining_depth = 2
+    && may_prune
+    && eval_value >= beta + reverse_futility_margin_2
+  then beta
   else if
     false
     && (not is_in_check)

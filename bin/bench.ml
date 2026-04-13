@@ -98,6 +98,22 @@ let bench_cases =
     ; fen = "2r2rk1/pp1n1ppp/2p1pn2/q2p4/3P4/2NBPN2/PPQ2PPP/2RR2K1 w - - 0 14"
     ; depth = 5
     }
+  ; { name = "carlsbad_structure"
+    ; fen = "2r2rk1/pp1b1pp1/2n1pn1p/q1bp4/3P4/2NBPN2/PPQ2PPP/2RR2K1 w - - 0 12"
+    ; depth = 5
+    }
+  ; { name = "open_center_tension"
+    ; fen = "r2q1rk1/pp2bppp/2n1bn2/2pp4/3P4/2PBPN2/PPQN1PPP/R1B2RK1 w - - 0 9"
+    ; depth = 5
+    }
+  ; { name = "pawn_race_endgame"
+    ; fen = "8/2k5/1p3pp1/pPp1p3/P1P1P3/2K3P1/5P2/8 w - - 0 45"
+    ; depth = 6
+    }
+  ; { name = "rook_activity_endgame"
+    ; fen = "8/5pk1/1p4p1/1P1r3p/p2P1P1P/P3R1P1/5K2/8 w - - 0 45"
+    ; depth = 6
+    }
   ]
 ;;
 
