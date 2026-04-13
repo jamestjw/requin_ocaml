@@ -896,6 +896,7 @@ let get_best_move ?(instrumentation = default_instrumentation) (pos : P.t) max_d
   let rec iterative_deepening curr_depth moves tt killers history_tbl prev_score =
     if curr_depth < max_depth
     then (
+      let tt = TT.new_search tt in
       History.decay history_tbl;
       let start_time = Stdlib.Sys.time () in
       let alpha, beta =
