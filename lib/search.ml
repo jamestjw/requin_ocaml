@@ -19,6 +19,7 @@ let qsearch_check_depth = 2
 let qsearch_delta_margin = T.queen_value + T.pawn_value
 let lmr_depth_threshold = 3
 let lmr_move_threshold = 3
+let root_search_ply = 1
 
 let lmr_reduction remaining_depth move_index =
   let depth_bonus = Int.max 0 ((remaining_depth - lmr_depth_threshold) / 2) in
@@ -905,7 +906,7 @@ let get_best_move ?(instrumentation = default_instrumentation) (pos : P.t) max_d
              (-beta)
              (-alpha)
              (not (P.is_white_to_move pos))
-             (P.game_ply pos + 1)
+             root_search_ply
              [ move ]
              ~stats
              ~may_prune:(not @@ P.is_capture pos move)

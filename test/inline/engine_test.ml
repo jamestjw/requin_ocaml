@@ -6,6 +6,7 @@ open Types
 module P = Position.Position
 module S = Search
 module T = Types
+module M = Movegen.MoveGen
 
 let create_pos pieces side_to_move =
   let pos = { (P.mk ()) with side_to_move } in
@@ -14,6 +15,20 @@ let create_pos pieces side_to_move =
   in
   let pos = P.set_state pos in
   pos
+;;
+
+let play_uci_moves pos moves =
+  List.fold moves ~init:pos ~f:(fun pos move_str ->
+    let legal_moves = M.generate_legal pos in
+    match
+      List.find legal_moves ~f:(fun move -> String.equal (T.show_move move) move_str)
+    with
+    | Some move -> P.do_move' pos move
+    | None ->
+      let legal_move_strs =
+        legal_moves |> List.map ~f:T.show_move |> String.concat ~sep:" "
+      in
+      Printf.failwithf "missing legal move %s; legal: %s" move_str legal_move_strs ())
 ;;
 
 let%test_unit "depth_one_white_capture_undefended_rook" =
@@ -153,6 +168,101 @@ let%test_unit "can search start position" =
   let pos = P.from_start_pos in
   let _ = S.get_best_move pos 5 in
   assert true
+;;
+
+let%test_unit "white avoids third repetition move from advantageous position" =
+  (* https://lichess.org/H9Rj5tT4/black#84 *)
+  let pos =
+    play_uci_moves
+      P.from_start_pos
+      [ "e2e4"
+      ; "c7c5"
+      ; "b1c3"
+      ; "e7e6"
+      ; "g1f3"
+      ; "b8c6"
+      ; "d2d4"
+      ; "c5d4"
+      ; "f3d4"
+      ; "a7a6"
+      ; "d4c6"
+      ; "b7c6"
+      ; "f1e2"
+      ; "d7d5"
+      ; "c1e3"
+      ; "g8f6"
+      ; "e4e5"
+      ; "f6d7"
+      ; "f2f4"
+      ; "a6a5"
+      ; "e1h1"
+      ; "c8a6"
+      ; "e2a6"
+      ; "a8a6"
+      ; "d1g4"
+      ; "h7h5"
+      ; "g4g3"
+      ; "h5h4"
+      ; "g3g4"
+      ; "a6a8"
+      ; "a2a3"
+      ; "d8b8"
+      ; "b2b3"
+      ; "g7g6"
+      ; "f1e1"
+      ; "f8c5"
+      ; "e3c5"
+      ; "d7c5"
+      ; "a1c1"
+      ; "b8b6"
+      ; "g1h1"
+      ; "h4h3"
+      ; "g2h3"
+      ; "c5d7"
+      ; "g4g3"
+      ; "b6c5"
+      ; "a3a4"
+      ; "c5b4"
+      ; "h1g2"
+      ; "e8f8"
+      ; "c1d1"
+      ; "f8g7"
+      ; "c3a2"
+      ; "b4c5"
+      ; "a2c3"
+      ; "h8h5"
+      ; "g3e3"
+      ; "a8h8"
+      ; "e3c5"
+      ; "d7c5"
+      ; "e1e3"
+      ; "c5a6"
+      ; "c3e2"
+      ; "c6c5"
+      ; "e3f3"
+      ; "a6b4"
+      ; "c2c3"
+      ; "b4c6"
+      ; "c3c4"
+      ; "d5d4"
+      ; "e2c1"
+      ; "h8b8"
+      ; "c1e2"
+      ; "b8b7"
+      ; "e2g3"
+      ; "h5h8"
+      ; "g3e4"
+      ; "h8d8"
+      ; "e4c5"
+      ; "b7c7"
+      ; "c5a6"
+      ; "c7a7"
+      ; "a6c5"
+      ; "a7c7"
+      ]
+  in
+  let best_move = S.get_best_move pos 5 in
+  assert (not (T.equal_move best_move @@ T.mk_move T.A6 T.C5))
 ;;
 
 let%test_unit "see_ge accepts a free rook capture" =
