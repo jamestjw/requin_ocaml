@@ -20,7 +20,7 @@ let qsearch_delta_margin = T.queen_value + T.pawn_value
 let lmr_depth_threshold = 3
 let lmr_move_threshold = 3
 let root_search_ply = 1
-let reverse_futility_margin_1 = T.rook_value
+let reverse_futility_margin_1 = T.bishop_value
 let reverse_futility_margin_2 = T.rook_value + T.knight_value
 
 let lmr_reduction remaining_depth move_index =
@@ -809,17 +809,6 @@ let rec pvSearch
     && may_prune
     && eval_value >= beta + reverse_futility_margin_2
   then beta
-  else if
-    false
-    && (not is_in_check)
-    && (not is_null_window)
-    && remaining_depth = 1
-    && may_prune
-    && eval_value + T.futility_margin_1 < alpha
-  then
-    (* If a move proves to be futile, we just return alpha since *)
-    (* further continuations are unlikely to raise alpha *)
-    alpha
   else if
     (not is_in_check)
     && (not is_null_window)
