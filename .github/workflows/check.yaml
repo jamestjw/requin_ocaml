@@ -21,7 +21,6 @@ jobs:
           ocaml-compiler: 5.2.x
           opam-disable-sandboxing: true
           dune-cache: true
-          cache-key: ${{ runner.os }}-ocaml-5.2-${{ hashFiles('**/*.opam', 'dune-project') }}
 
       - name: "Install dependencies"
         run: |
