@@ -59,39 +59,10 @@ let capture_order_score pos move =
   (victim_value * 16) - attacker_value + promotion_bonus
 ;;
 
-let pick_next_move scored_moves start_idx =
-  let len = Array.length scored_moves in
-  let rec loop idx best_idx best_score =
-    if idx >= len
-    then best_idx
-    else (
-      let _, score = scored_moves.(idx) in
-      if score > best_score
-      then loop (idx + 1) idx score
-      else loop (idx + 1) best_idx best_score)
-  in
-  let _, start_score = scored_moves.(start_idx) in
-  let best_idx = loop (start_idx + 1) start_idx start_score in
-  if best_idx <> start_idx
-  then (
-    let tmp = scored_moves.(start_idx) in
-    scored_moves.(start_idx) <- scored_moves.(best_idx);
-    scored_moves.(best_idx) <- tmp)
-;;
-
 let ordered_moves_by_score moves ~score =
   List.map moves ~f:(fun move -> move, score move)
-  |> Array.of_list
-  |> fun scored_moves ->
-  let rec loop idx acc =
-    if idx >= Array.length scored_moves
-    then List.rev acc
-    else (
-      pick_next_move scored_moves idx;
-      let move, _ = scored_moves.(idx) in
-      loop (idx + 1) (move :: acc))
-  in
-  loop 0 []
+  |> List.sort ~compare:(fun (_, s1) (_, s2) -> Int.compare s2 s1)
+  |> List.map ~f:fst
 ;;
 
 type stats =
