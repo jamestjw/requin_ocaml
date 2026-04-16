@@ -8,8 +8,9 @@
  (github jamestjw/requin_ocaml))
 
 (maintainers "James Tan")
+(authors "James Tan")
 
-(license GPL-3.0)
+(license GPL-3.0-only)
 
 (package
  (name requin_ocaml)
