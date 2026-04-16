@@ -32,8 +32,8 @@ let lmr_reduction remaining_depth move_index =
 let history_lmr_bonus history_score = if history_score >= 2000 then 1 else 0
 
 let lmp_move_threshold = function
-  | 1 -> 4
-  | 2 -> 8
+  | 1 -> 2
+  | 2 -> 5
   | _ -> Int.max_value
 ;;
 
