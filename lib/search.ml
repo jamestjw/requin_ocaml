@@ -259,8 +259,6 @@ let killer_is_usable pos hash_move move =
   && P.legal pos move
 ;;
 
-let move_in_list moves target = List.exists moves ~f:(T.equal_move target)
-
 let is_legal_generated_move pos =
   let us = P.side_to_move pos in
   let pinned = P.blockers_for_king pos us |> BB.bb_and @@ P.pieces_of_colour pos us in
@@ -335,12 +333,10 @@ let get_quiets picker =
   match picker.quiets with
   | Some moves -> moves
   | None ->
-    let good_captures = get_good_captures picker in
     let moves =
       generated_quiet_moves picker.pos
       |> List.filter ~f:(fun move ->
-        (not (move_in_list good_captures move))
-        && (not (List.exists picker.killer_moves ~f:(T.equal_move move)))
+        (not (List.exists picker.killer_moves ~f:(T.equal_move move)))
         && not (Option.value_map picker.hash_move ~default:false ~f:(T.equal_move move)))
       |> ordered_moves_by_score ~score:(fun move ->
         History.get picker.history_tbl move (P.moved_piece_exn picker.pos move))
