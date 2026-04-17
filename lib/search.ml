@@ -538,7 +538,18 @@ let rec pvSearch
   (* Attempt null move pruning if we can, return an optional score if we get a cutoff *)
   let remaining_depth = max_depth - curr_ply in
   let offset = if is_white then 1 else -1 in
-  let eval_value = offset * Eval.evaluate pos () in
+  stats.tt_probes <- stats.tt_probes + 1;
+  let tt_entry = TT.probe tt (P.key pos) in
+  let eval_value_from_tt = function
+    | Some { TT.eval_value; _ } when eval_value <> T.value_none -> Some eval_value
+    | _ -> None
+  in
+  let get_eval_value tt_entry =
+    match eval_value_from_tt tt_entry with
+    | Some eval_value -> eval_value
+    | None -> offset * Eval.evaluate pos ()
+  in
+  let eval_value = get_eval_value tt_entry in
   let maybe_attempt_nmp pos =
     let stm = P.side_to_move pos in
     let has_non_pawn_material =
@@ -810,8 +821,6 @@ let rec pvSearch
     (* Same as above *)
     alpha
   else (
-    stats.tt_probes <- stats.tt_probes + 1;
-    let tt_entry = TT.probe tt (P.key pos) in
     match process_tt_entry remaining_depth tt_entry alpha with
     | Some score, _, _ -> score
     | _, alpha, found_hash_move ->
