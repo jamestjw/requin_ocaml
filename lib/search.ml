@@ -538,365 +538,370 @@ let rec pvSearch
   (* Attempt null move pruning if we can, return an optional score if we get a cutoff *)
   let remaining_depth = max_depth - curr_ply in
   let offset = if is_white then 1 else -1 in
-  stats.tt_probes <- stats.tt_probes + 1;
-  let tt_entry = TT.probe tt (P.key pos) in
-  let eval_value_from_tt = function
-    | Some { TT.eval_value; _ } when eval_value <> T.value_none -> Some eval_value
-    | _ -> None
-  in
-  let get_eval_value tt_entry =
-    match eval_value_from_tt tt_entry with
-    | Some eval_value -> eval_value
-    | None -> offset * Eval.evaluate pos ()
-  in
-  let eval_value = get_eval_value tt_entry in
-  let maybe_attempt_nmp pos =
-    let stm = P.side_to_move pos in
-    let has_non_pawn_material =
-      P.count_by_colour_and_pt pos stm T.KNIGHT
-      + P.count_by_colour_and_pt pos stm T.BISHOP
-      + P.count_by_colour_and_pt pos stm T.ROOK
-      + P.count_by_colour_and_pt pos stm T.QUEEN
-      > 0
-    in
-    let may_do_nmp =
-      (* TODO: check for zugzwang, we could do something simple like check if there
-       are only kings and pawns *)
-      remaining_depth >= null_move_reduction
-      && (not (P.is_in_check pos))
-      && (not is_pv)
-      && has_non_pawn_material
-      && eval_value >= beta
-      (* Add the following conditions
-       - !is_cut_node, we are likely to get a cut off in, don't risk it
-       - !(static eval > beta + 50 centipawns), because the position is so good, we are likely to get a cutoff anyway *)
-    in
-    if may_do_nmp
-    then (
-      let score =
-        -1
-        * pvSearch
-            (P.do_null_move pos)
-            (curr_ply + 1 + null_move_reduction)
-            max_depth
-            (-beta)
-            (-beta + 1)
-            (not is_white)
-            (ply + 1)
-            (T.null_move :: history)
-            ~stats
-            ~may_prune
-            ~tt
-            ~killers
-            ~is_null_window:true
-            ~is_pv:false
-            ~history_tbl
-      in
-      if score >= beta then Some score else None)
-    else None
-  in
-  let search_with_ply move alpha beta extra_ply ~is_null_window ~is_pv =
-    -1
-    * pvSearch
-        (P.do_move' pos move)
-        (curr_ply + 1 + extra_ply)
-        max_depth
-        (-beta)
-        (-alpha)
-        (not is_white)
-        (ply + 1)
-        (move :: history)
-        ~stats
-        ~may_prune:(not @@ P.is_capture pos move)
-        ~tt
-        ~killers
-        ~is_null_window
-        ~is_pv
-        ~history_tbl
-  in
-  let search move alpha beta ~is_null_window ~is_pv =
-    search_with_ply move alpha beta 0 ~is_null_window ~is_pv
-  in
-  let is_in_check = P.is_in_check pos in
-  let alpha_orig = alpha in
-  let do_move (alpha, best_move, is_first_move, idx, quiet_moves) stage move =
-    let is_quiet = not (P.is_capture pos move || T.is_promotion move) in
-    let can_lmp =
-      (* Skip very late quiet moves in shallow non-PV null-window nodes 
-         because they are unlikely to raise alpha. *)
-      is_null_window
-      && may_prune
-      && (not is_pv)
-      && (not is_in_check)
-      && is_quiet
-      && remaining_depth = 2
-      && idx >= lmp_move_threshold remaining_depth
-    in
-    if can_lmp
-    then Continue_or_stop.Continue (alpha, best_move, false, idx + 1, quiet_moves)
-    else (
-      let score =
-        if is_first_move
-        then search move alpha beta ~is_null_window:false ~is_pv
-        else (
-          (* Search with null window, i.e. with [alpha , alpha + 1] *)
-          (* Since this isn't the first move, by definition it isn't in the PV *)
-          let can_lmr =
-            may_prune
-            && (not is_pv)
-            && (not is_in_check)
-            && remaining_depth >= lmr_depth_threshold
-            && idx >= lmr_move_threshold
-            && is_quiet
-          in
-          let score =
-            if can_lmr
-            then (
-              stats.lmr_attempts <- stats.lmr_attempts + 1;
-              let history_score =
-                History.get history_tbl move (P.moved_piece_exn pos move)
-              in
-              if history_score >= 2000
-              then stats.lmr_improving_moves <- stats.lmr_improving_moves + 1;
-              let reduction =
-                Int.max
-                  0
-                  (lmr_reduction remaining_depth idx - history_lmr_bonus history_score)
-              in
-              let reduced_score =
-                search_with_ply
-                  move
-                  alpha
-                  (alpha + 1)
-                  reduction
-                  ~is_null_window:true
-                  ~is_pv:false
-              in
-              if reduced_score > alpha
-              then (
-                stats.lmr_reruns <- stats.lmr_reruns + 1;
-                search move alpha (alpha + 1) ~is_null_window:true ~is_pv:false)
-              else reduced_score)
-            else search move alpha (alpha + 1) ~is_null_window:true ~is_pv:false
-          in
-          if score > alpha && beta - alpha > 1
-          then
-            (* re-search with full window *)
-            search move alpha beta ~is_null_window:false ~is_pv:false
-          else score)
-      in
-      if score >= beta
-      then (
-        stats.cutoffs <- stats.cutoffs + 1;
-        stats.fail_high <- stats.fail_high + 1;
-        record_search_fail_high stats stage idx remaining_depth;
-        stats.cutoff_index_sum <- stats.cutoff_index_sum + idx;
-        stats.cutoff_count <- stats.cutoff_count + 1;
-        if is_first_move then stats.first_move_cutoffs <- stats.first_move_cutoffs + 1;
-        if
-          T.move_is_ok move
-          && is_quiet
-          && not (T.equal_move_type (T.get_move_type move) T.CASTLING)
-        then (
-          K.add_killer killers ply move;
-          History.update history_tbl move remaining_depth (P.moved_piece_exn pos move);
-          List.iter quiet_moves ~f:(fun quiet_move ->
-            History.penalize
-              history_tbl
-              quiet_move
-              remaining_depth
-              (P.moved_piece_exn pos quiet_move)));
-        ignore
-        @@ TT.store
-             tt
-             ~key:(P.key pos)
-             ~m:move
-             ~depth:remaining_depth
-             ~eval_value
-             ~value:(value_to_tt score curr_ply)
-             ~bound:TT.BOUND_LOWER;
-        Continue_or_stop.Stop (beta, best_move, true, idx, quiet_moves))
-      else if score > alpha
-      then
-        Continue_or_stop.Continue
-          ( score
-          , Some move
-          , false
-          , idx + 1
-          , if is_quiet then move :: quiet_moves else quiet_moves )
-      else if not is_quiet
-      then Continue_or_stop.Continue (alpha, best_move, false, idx + 1, quiet_moves)
-      else
-        Continue_or_stop.Continue (alpha, best_move, false, idx + 1, move :: quiet_moves))
-  in
-  let do_move' alpha stage move ~is_first_move ~idx =
-    match do_move (alpha, None, is_first_move, idx, []) stage move with
-    | Continue_or_stop.Continue (score, m, _, _, _) -> score, m, false
-    | Continue_or_stop.Stop (score, m, cut, _, _) -> score, m, cut
-  in
-  (* Try to get an early exit score from the TT entry, also evaluates the hash
-    move if it exists *)
-  let process_tt_entry depth (tt_entry : TT.entry option) alpha =
-    match tt_entry with
-    | Some tt_entry ->
-      (* TODO: Unify TT hash-move handling with the main move loop so the move picker
-         is the single path responsible for searching ordered moves. *)
-      stats.tt_hits <- stats.tt_hits + 1;
-      if tt_entry.depth >= depth
-      then (
-        match tt_entry.bound with
-        | TT.BOUND_EXACT -> stats.tt_exact <- stats.tt_exact + 1
-        | TT.BOUND_LOWER -> stats.tt_lower <- stats.tt_lower + 1
-        | TT.BOUND_UPPER -> stats.tt_upper <- stats.tt_upper + 1
-        | TT.BOUND_NONE -> ())
-      else ();
-      let tt_value = value_from_tt tt_entry.value curr_ply in
-      let score =
-        match tt_entry.depth >= depth, tt_entry.bound with
-        | true, TT.BOUND_EXACT ->
-          (* TODO: Check if we are at a Pv node before returning this *)
-          Some tt_value
-        | true, TT.BOUND_LOWER when tt_value >= beta -> Some tt_value
-        | true, TT.BOUND_UPPER when tt_value <= alpha -> Some tt_value
-        | _, _ -> None
-      in
-      (match score with
-       | Some _ -> stats.tt_cutoffs <- stats.tt_cutoffs + 1
-       | None -> ());
-      let alpha =
-        match tt_entry.depth >= depth, tt_entry.bound with
-        | true, TT.BOUND_LOWER -> Int.max alpha tt_value
-        | _ -> alpha
-      in
-      (match score, tt_entry.bound with
-       | Some _, _ -> score, alpha, false
-       | _, (TT.BOUND_EXACT | TT.BOUND_LOWER)
-         when T.move_not_none tt_entry.move && P.legal pos tt_entry.move ->
-         (* Search hash move *)
-         let score, _, is_cut =
-           do_move' alpha Stage_hash tt_entry.move ~is_first_move:true ~idx:0
-         in
-         if is_cut then Some score, alpha, true else None, score, true
-       | _, _ -> score, alpha, false)
-    | None -> None, alpha, false
-  in
-  (* This takes into account the 50 move rule and threehold repetition *)
   if P.is_draw pos ply
   then T.value_draw
-  else if curr_ply = T.max_ply
-  then eval_value
-  else if remaining_depth <= 0
-  then
-    qsearch
-      pos
-      alpha
-      beta
-      is_white
-      ply
-      history
-      ~stats
-      ~qdepth:qsearch_max_depth
-      ~check_depth:qsearch_check_depth
-  else if
-    (not is_in_check)
-    && (not is_pv)
-    && remaining_depth = 1
-    && may_prune
-    && eval_value >= beta + reverse_futility_margin_1
-  then beta
-  else if
-    (not is_in_check)
-    && (not is_pv)
-    && remaining_depth = 2
-    && may_prune
-    && eval_value >= beta + reverse_futility_margin_2
-  then beta
-  else if
-    (not is_in_check)
-    && (not is_null_window)
-    && remaining_depth = 2
-    && may_prune
-    && eval_value + T.futility_margin_2 < alpha
-  then
-    (* Same as above *)
-    alpha
   else (
-    match process_tt_entry remaining_depth tt_entry alpha with
-    | Some score, _, _ -> score
-    | _, alpha, found_hash_move ->
-      (match maybe_attempt_nmp pos with
-       | Some score -> score
-       | _ ->
-         let hash_move =
-           if found_hash_move
-           then None
-           else
-             Option.bind tt_entry ~f:(fun entry ->
-               if T.move_not_none entry.move && P.legal pos entry.move
-               then Some entry.move
-               else None)
-         in
-         let move_picker =
-           mk_move_picker
-             pos
-             ~history_tbl
-             ~hash_move
-             ~killer_moves:(K.get_killers killers ply)
-         in
-         (match next_move move_picker with
-          | None ->
-            (* Either draw or mate *)
-            if P.is_in_check pos then -(T.value_mate - curr_ply) else T.value_draw
-          | Some (first_stage, first_move) ->
-            let rec loop_moves
-                      (acc : int * T.move option * bool * int * T.move list)
-                      current_stage
-                      current_move
-              =
-              match do_move acc current_stage current_move with
-              | Continue_or_stop.Continue next_acc ->
-                (match next_move move_picker with
-                 | None ->
-                   let a, b, _, i, _ = next_acc in
-                   a, b, false, i
-                 | Some (stage, move) -> loop_moves next_acc stage move)
-              | Continue_or_stop.Stop (score, best_move, _, next_idx, _) ->
-                score, best_move, true, next_idx
+    stats.tt_probes <- stats.tt_probes + 1;
+    let tt_entry = TT.probe tt (P.key pos) in
+    let eval_value_from_tt = function
+      | Some { TT.eval_value; _ } when eval_value <> T.value_none -> Some eval_value
+      | _ -> None
+    in
+    let get_eval_value tt_entry =
+      match eval_value_from_tt tt_entry with
+      | Some eval_value -> eval_value
+      | None -> offset * Eval.evaluate pos ()
+    in
+    let eval_value = get_eval_value tt_entry in
+    let maybe_attempt_nmp pos =
+      let stm = P.side_to_move pos in
+      let has_non_pawn_material =
+        P.count_by_colour_and_pt pos stm T.KNIGHT
+        + P.count_by_colour_and_pt pos stm T.BISHOP
+        + P.count_by_colour_and_pt pos stm T.ROOK
+        + P.count_by_colour_and_pt pos stm T.QUEEN
+        > 0
+      in
+      let may_do_nmp =
+        (* TODO: check for zugzwang, we could do something simple like check if there
+       are only kings and pawns *)
+        remaining_depth >= null_move_reduction
+        && (not (P.is_in_check pos))
+        && (not is_pv)
+        && has_non_pawn_material
+        && eval_value >= beta
+        (* Add the following conditions
+       - !is_cut_node, we are likely to get a cut off in, don't risk it
+       - !(static eval > beta + 50 centipawns), because the position is so good, we are likely to get a cutoff anyway *)
+      in
+      if may_do_nmp
+      then (
+        let score =
+          -1
+          * pvSearch
+              (P.do_null_move pos)
+              (curr_ply + 1 + null_move_reduction)
+              max_depth
+              (-beta)
+              (-beta + 1)
+              (not is_white)
+              (ply + 1)
+              (T.null_move :: history)
+              ~stats
+              ~may_prune
+              ~tt
+              ~killers
+              ~is_null_window:true
+              ~is_pv:false
+              ~history_tbl
+        in
+        if score >= beta then Some score else None)
+      else None
+    in
+    let search_with_ply move alpha beta extra_ply ~is_null_window ~is_pv =
+      -1
+      * pvSearch
+          (P.do_move' pos move)
+          (curr_ply + 1 + extra_ply)
+          max_depth
+          (-beta)
+          (-alpha)
+          (not is_white)
+          (ply + 1)
+          (move :: history)
+          ~stats
+          ~may_prune:(not @@ P.is_capture pos move)
+          ~tt
+          ~killers
+          ~is_null_window
+          ~is_pv
+          ~history_tbl
+    in
+    let search move alpha beta ~is_null_window ~is_pv =
+      search_with_ply move alpha beta 0 ~is_null_window ~is_pv
+    in
+    let is_in_check = P.is_in_check pos in
+    let alpha_orig = alpha in
+    let do_move (alpha, best_move, is_first_move, idx, quiet_moves) stage move =
+      let is_quiet = not (P.is_capture pos move || T.is_promotion move) in
+      let can_lmp =
+        (* Skip very late quiet moves in shallow non-PV null-window nodes 
+         because they are unlikely to raise alpha. *)
+        is_null_window
+        && may_prune
+        && (not is_pv)
+        && (not is_in_check)
+        && is_quiet
+        && remaining_depth = 2
+        && idx >= lmp_move_threshold remaining_depth
+      in
+      if can_lmp
+      then Continue_or_stop.Continue (alpha, best_move, false, idx + 1, quiet_moves)
+      else (
+        let score =
+          if is_first_move
+          then search move alpha beta ~is_null_window:false ~is_pv
+          else (
+            (* Search with null window, i.e. with [alpha , alpha + 1] *)
+            (* Since this isn't the first move, by definition it isn't in the PV *)
+            let can_lmr =
+              may_prune
+              && (not is_pv)
+              && (not is_in_check)
+              && remaining_depth >= lmr_depth_threshold
+              && idx >= lmr_move_threshold
+              && is_quiet
             in
-            let score, best_move, is_cut, _ =
-              loop_moves
-                (alpha, None, not found_hash_move, (if found_hash_move then 1 else 0), [])
-                first_stage
-                first_move
+            let score =
+              if can_lmr
+              then (
+                stats.lmr_attempts <- stats.lmr_attempts + 1;
+                let history_score =
+                  History.get history_tbl move (P.moved_piece_exn pos move)
+                in
+                if history_score >= 2000
+                then stats.lmr_improving_moves <- stats.lmr_improving_moves + 1;
+                let reduction =
+                  Int.max
+                    0
+                    (lmr_reduction remaining_depth idx - history_lmr_bonus history_score)
+                in
+                let reduced_score =
+                  search_with_ply
+                    move
+                    alpha
+                    (alpha + 1)
+                    reduction
+                    ~is_null_window:true
+                    ~is_pv:false
+                in
+                if reduced_score > alpha
+                then (
+                  stats.lmr_reruns <- stats.lmr_reruns + 1;
+                  search move alpha (alpha + 1) ~is_null_window:true ~is_pv:false)
+                else reduced_score)
+              else search move alpha (alpha + 1) ~is_null_window:true ~is_pv:false
             in
-            if (not is_cut) && score <= alpha_orig
-            then stats.fail_low <- stats.fail_low + 1;
-            if not is_cut
-            then (
-              match best_move, is_null_window with
-              | Some m, false ->
-                ignore
-                @@ TT.store
-                     tt
-                     ~key:(P.key pos)
-                     ~m
-                     ~depth:remaining_depth
-                     ~eval_value
-                     ~value:(value_to_tt score curr_ply)
-                     ~bound:TT.BOUND_EXACT
-              | None, _ ->
-                (* It's fine to set an upper bound even if we are doing a null move search *)
-                ignore
-                @@ TT.store
-                     tt
-                     ~key:(P.key pos)
-                     ~m:T.none_move
-                     ~depth:remaining_depth
-                     ~eval_value
-                     ~value:(value_to_tt score curr_ply)
-                     ~bound:TT.BOUND_UPPER
-              | _ -> ());
-            score)))
+            if score > alpha && beta - alpha > 1
+            then
+              (* re-search with full window *)
+              search move alpha beta ~is_null_window:false ~is_pv:false
+            else score)
+        in
+        if score >= beta
+        then (
+          stats.cutoffs <- stats.cutoffs + 1;
+          stats.fail_high <- stats.fail_high + 1;
+          record_search_fail_high stats stage idx remaining_depth;
+          stats.cutoff_index_sum <- stats.cutoff_index_sum + idx;
+          stats.cutoff_count <- stats.cutoff_count + 1;
+          if is_first_move then stats.first_move_cutoffs <- stats.first_move_cutoffs + 1;
+          if
+            T.move_is_ok move
+            && is_quiet
+            && not (T.equal_move_type (T.get_move_type move) T.CASTLING)
+          then (
+            K.add_killer killers ply move;
+            History.update history_tbl move remaining_depth (P.moved_piece_exn pos move);
+            List.iter quiet_moves ~f:(fun quiet_move ->
+              History.penalize
+                history_tbl
+                quiet_move
+                remaining_depth
+                (P.moved_piece_exn pos quiet_move)));
+          ignore
+          @@ TT.store
+               tt
+               ~key:(P.key pos)
+               ~m:move
+               ~depth:remaining_depth
+               ~eval_value
+               ~value:(value_to_tt score curr_ply)
+               ~bound:TT.BOUND_LOWER;
+          Continue_or_stop.Stop (beta, best_move, true, idx, quiet_moves))
+        else if score > alpha
+        then
+          Continue_or_stop.Continue
+            ( score
+            , Some move
+            , false
+            , idx + 1
+            , if is_quiet then move :: quiet_moves else quiet_moves )
+        else if not is_quiet
+        then Continue_or_stop.Continue (alpha, best_move, false, idx + 1, quiet_moves)
+        else
+          Continue_or_stop.Continue (alpha, best_move, false, idx + 1, move :: quiet_moves))
+    in
+    let do_move' alpha stage move ~is_first_move ~idx =
+      match do_move (alpha, None, is_first_move, idx, []) stage move with
+      | Continue_or_stop.Continue (score, m, _, _, _) -> score, m, false
+      | Continue_or_stop.Stop (score, m, cut, _, _) -> score, m, cut
+    in
+    (* Try to get an early exit score from the TT entry, also evaluates the hash
+    move if it exists *)
+    let process_tt_entry depth (tt_entry : TT.entry option) alpha =
+      match tt_entry with
+      | Some tt_entry ->
+        (* TODO: Unify TT hash-move handling with the main move loop so the move picker
+         is the single path responsible for searching ordered moves. *)
+        stats.tt_hits <- stats.tt_hits + 1;
+        if tt_entry.depth >= depth
+        then (
+          match tt_entry.bound with
+          | TT.BOUND_EXACT -> stats.tt_exact <- stats.tt_exact + 1
+          | TT.BOUND_LOWER -> stats.tt_lower <- stats.tt_lower + 1
+          | TT.BOUND_UPPER -> stats.tt_upper <- stats.tt_upper + 1
+          | TT.BOUND_NONE -> ())
+        else ();
+        let tt_value = value_from_tt tt_entry.value curr_ply in
+        let score =
+          match tt_entry.depth >= depth, tt_entry.bound with
+          | true, TT.BOUND_EXACT ->
+            (* TODO: Check if we are at a Pv node before returning this *)
+            Some tt_value
+          | true, TT.BOUND_LOWER when tt_value >= beta -> Some tt_value
+          | true, TT.BOUND_UPPER when tt_value <= alpha -> Some tt_value
+          | _, _ -> None
+        in
+        (match score with
+         | Some _ -> stats.tt_cutoffs <- stats.tt_cutoffs + 1
+         | None -> ());
+        let alpha =
+          match tt_entry.depth >= depth, tt_entry.bound with
+          | true, TT.BOUND_LOWER -> Int.max alpha tt_value
+          | _ -> alpha
+        in
+        (match score, tt_entry.bound with
+         | Some _, _ -> score, alpha, false
+         | _, (TT.BOUND_EXACT | TT.BOUND_LOWER)
+           when T.move_not_none tt_entry.move && P.legal pos tt_entry.move ->
+           (* Search hash move *)
+           let score, _, is_cut =
+             do_move' alpha Stage_hash tt_entry.move ~is_first_move:true ~idx:0
+           in
+           if is_cut then Some score, alpha, true else None, score, true
+         | _, _ -> score, alpha, false)
+      | None -> None, alpha, false
+    in
+    (* This takes into account the 50 move rule and threehold repetition *)
+    if curr_ply = T.max_ply
+    then eval_value
+    else if remaining_depth <= 0
+    then
+      qsearch
+        pos
+        alpha
+        beta
+        is_white
+        ply
+        history
+        ~stats
+        ~qdepth:qsearch_max_depth
+        ~check_depth:qsearch_check_depth
+    else if
+      (not is_in_check)
+      && (not is_pv)
+      && remaining_depth = 1
+      && may_prune
+      && eval_value >= beta + reverse_futility_margin_1
+    then beta
+    else if
+      (not is_in_check)
+      && (not is_pv)
+      && remaining_depth = 2
+      && may_prune
+      && eval_value >= beta + reverse_futility_margin_2
+    then beta
+    else if
+      (not is_in_check)
+      && (not is_null_window)
+      && remaining_depth = 2
+      && may_prune
+      && eval_value + T.futility_margin_2 < alpha
+    then
+      (* Same as above *)
+      alpha
+    else (
+      match process_tt_entry remaining_depth tt_entry alpha with
+      | Some score, _, _ -> score
+      | _, alpha, found_hash_move ->
+        (match maybe_attempt_nmp pos with
+         | Some score -> score
+         | _ ->
+           let hash_move =
+             if found_hash_move
+             then None
+             else
+               Option.bind tt_entry ~f:(fun entry ->
+                 if T.move_not_none entry.move && P.legal pos entry.move
+                 then Some entry.move
+                 else None)
+           in
+           let move_picker =
+             mk_move_picker
+               pos
+               ~history_tbl
+               ~hash_move
+               ~killer_moves:(K.get_killers killers ply)
+           in
+           (match next_move move_picker with
+            | None ->
+              (* Either draw or mate *)
+              if P.is_in_check pos then -(T.value_mate - curr_ply) else T.value_draw
+            | Some (first_stage, first_move) ->
+              let rec loop_moves
+                        (acc : int * T.move option * bool * int * T.move list)
+                        current_stage
+                        current_move
+                =
+                match do_move acc current_stage current_move with
+                | Continue_or_stop.Continue next_acc ->
+                  (match next_move move_picker with
+                   | None ->
+                     let a, b, _, i, _ = next_acc in
+                     a, b, false, i
+                   | Some (stage, move) -> loop_moves next_acc stage move)
+                | Continue_or_stop.Stop (score, best_move, _, next_idx, _) ->
+                  score, best_move, true, next_idx
+              in
+              let score, best_move, is_cut, _ =
+                loop_moves
+                  ( alpha
+                  , None
+                  , not found_hash_move
+                  , (if found_hash_move then 1 else 0)
+                  , [] )
+                  first_stage
+                  first_move
+              in
+              if (not is_cut) && score <= alpha_orig
+              then stats.fail_low <- stats.fail_low + 1;
+              if not is_cut
+              then (
+                match best_move, is_null_window with
+                | Some m, false ->
+                  ignore
+                  @@ TT.store
+                       tt
+                       ~key:(P.key pos)
+                       ~m
+                       ~depth:remaining_depth
+                       ~eval_value
+                       ~value:(value_to_tt score curr_ply)
+                       ~bound:TT.BOUND_EXACT
+                | None, _ ->
+                  (* It's fine to set an upper bound even if we are doing a null move search *)
+                  ignore
+                  @@ TT.store
+                       tt
+                       ~key:(P.key pos)
+                       ~m:T.none_move
+                       ~depth:remaining_depth
+                       ~eval_value
+                       ~value:(value_to_tt score curr_ply)
+                       ~bound:TT.BOUND_UPPER
+                | _ -> ());
+              score))))
 ;;
 
 let get_best_move ?(instrumentation = default_instrumentation) (pos : P.t) max_depth
