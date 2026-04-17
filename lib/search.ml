@@ -14,7 +14,7 @@ let parallel = 8
 (* Also known as R *)
 (* TODO: make this dynamic *)
 let null_move_reduction = 3
-let qsearch_max_depth = 4
+let qsearch_max_depth = 12
 let qsearch_check_depth = 2
 let qsearch_delta_margin = T.queen_value + T.pawn_value
 let lmr_depth_threshold = 3
@@ -426,7 +426,7 @@ let pv_from_tt (pos : P.t) tt max_len =
   loop pos [] max_len
 ;;
 
-let rec qsearch pos alpha beta is_white ply history ~stats ~qdepth =
+let rec qsearch pos alpha beta is_white ply history ~stats ~qdepth ~check_depth =
   stats.qnodes <- stats.qnodes + 1;
   let in_check = P.is_in_check pos in
   let offset = if is_white then 1 else -1 in
@@ -434,7 +434,9 @@ let rec qsearch pos alpha beta is_white ply history ~stats ~qdepth =
   let alpha =
     if not in_check then if stand_pat > alpha then stand_pat else alpha else alpha
   in
-  if (not in_check) && stand_pat >= beta
+  if qdepth <= 0 || (in_check && check_depth <= 0)
+  then if in_check then stand_pat else alpha
+  else if (not in_check) && stand_pat >= beta
   then beta
   else if (not in_check) && stand_pat + qsearch_delta_margin <= alpha
   then alpha
@@ -478,7 +480,8 @@ let rec qsearch pos alpha beta is_white ply history ~stats ~qdepth =
                (ply + 1)
                (m :: history)
                ~stats
-               ~qdepth:(Int.max 0 (qdepth - 1))
+               ~qdepth:(qdepth - 1)
+               ~check_depth:(if in_check then check_depth - 1 else qsearch_check_depth)
           in
           if score >= beta
           then (
@@ -768,7 +771,17 @@ let rec pvSearch
   else if curr_ply = T.max_ply
   then eval_value
   else if remaining_depth <= 0
-  then qsearch pos alpha beta is_white ply history ~stats ~qdepth:qsearch_max_depth
+  then
+    qsearch
+      pos
+      alpha
+      beta
+      is_white
+      ply
+      history
+      ~stats
+      ~qdepth:qsearch_max_depth
+      ~check_depth:qsearch_check_depth
   else if
     (not is_in_check)
     && (not is_pv)
