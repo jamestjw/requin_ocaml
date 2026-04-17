@@ -605,7 +605,7 @@ let rec pvSearch
   in
   let is_in_check = P.is_in_check pos in
   let alpha_orig = alpha in
-  let do_move quiet_moves (alpha, best_move, is_first_move, idx) stage move =
+  let do_move (alpha, best_move, is_first_move, idx, quiet_moves) stage move =
     let is_quiet = not (P.is_capture pos move || T.is_promotion move) in
     let can_lmp =
       (* Skip very late quiet moves in shallow non-PV null-window nodes 
@@ -619,7 +619,7 @@ let rec pvSearch
       && idx >= lmp_move_threshold remaining_depth
     in
     if can_lmp
-    then Continue_or_stop.Continue (alpha, best_move, false, idx + 1)
+    then Continue_or_stop.Continue (alpha, best_move, false, idx + 1, quiet_moves)
     else (
       let score =
         if is_first_move
@@ -697,17 +697,24 @@ let rec pvSearch
              ~eval_value
              ~value:(value_to_tt score curr_ply)
              ~bound:TT.BOUND_LOWER;
-        Continue_or_stop.Stop (beta, best_move, true, idx))
+        Continue_or_stop.Stop (beta, best_move, true, idx, quiet_moves))
       else if score > alpha
-      then Continue_or_stop.Continue (score, Some move, false, idx + 1)
+      then
+        Continue_or_stop.Continue
+          ( score
+          , Some move
+          , false
+          , idx + 1
+          , if is_quiet then move :: quiet_moves else quiet_moves )
       else if not is_quiet
-      then Continue_or_stop.Continue (alpha, best_move, false, idx + 1)
-      else Continue_or_stop.Continue (alpha, best_move, false, idx + 1))
+      then Continue_or_stop.Continue (alpha, best_move, false, idx + 1, quiet_moves)
+      else
+        Continue_or_stop.Continue (alpha, best_move, false, idx + 1, move :: quiet_moves))
   in
   let do_move' alpha stage move ~is_first_move ~idx =
-    match do_move [] (alpha, None, is_first_move, idx) stage move with
-    | Continue_or_stop.Continue (score, m, _, _) -> score, m, false
-    | Continue_or_stop.Stop (score, m, cut, _) -> score, m, cut
+    match do_move (alpha, None, is_first_move, idx, []) stage move with
+    | Continue_or_stop.Continue (score, m, _, _, _) -> score, m, false
+    | Continue_or_stop.Stop (score, m, cut, _, _) -> score, m, cut
   in
   (* Try to get an early exit score from the TT entry, also evaluates the hash
     move if it exists *)
@@ -815,20 +822,24 @@ let rec pvSearch
             (* Either draw or mate *)
             if P.is_in_check pos then -(T.value_mate - curr_ply) else T.value_draw
           | Some (first_stage, first_move) ->
-            let rec loop_moves acc current_stage current_move =
-              match do_move [] acc current_stage current_move with
+            let rec loop_moves
+                      (acc : int * T.move option * bool * int * T.move list)
+                      current_stage
+                      current_move
+              =
+              match do_move acc current_stage current_move with
               | Continue_or_stop.Continue next_acc ->
                 (match next_move move_picker with
                  | None ->
-                   let a, b, _, i = next_acc in
+                   let a, b, _, i, _ = next_acc in
                    a, b, false, i
                  | Some (stage, move) -> loop_moves next_acc stage move)
-              | Continue_or_stop.Stop (score, best_move, _, next_idx) ->
+              | Continue_or_stop.Stop (score, best_move, _, next_idx, _) ->
                 score, best_move, true, next_idx
             in
             let score, best_move, is_cut, _ =
               loop_moves
-                (alpha, None, not found_hash_move, if found_hash_move then 1 else 0)
+                (alpha, None, not found_hash_move, (if found_hash_move then 1 else 0), [])
                 first_stage
                 first_move
             in
