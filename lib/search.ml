@@ -540,6 +540,8 @@ let rec pvSearch
   let offset = if is_white then 1 else -1 in
   if P.is_draw pos ply
   then T.value_draw
+  else if curr_ply = T.max_ply
+  then offset * Eval.evaluate pos ()
   else (
     stats.tt_probes <- stats.tt_probes + 1;
     let tt_entry = TT.probe tt (P.key pos) in
@@ -784,9 +786,7 @@ let rec pvSearch
       | None -> None, alpha, false
     in
     (* This takes into account the 50 move rule and threehold repetition *)
-    if curr_ply = T.max_ply
-    then eval_value
-    else if remaining_depth <= 0
+    if remaining_depth <= 0
     then
       qsearch
         pos
