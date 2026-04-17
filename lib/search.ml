@@ -450,7 +450,7 @@ let rec qsearch pos alpha beta is_white ply history ~stats ~qdepth ~check_depth 
           match T.get_ppt move with
           | Some T.QUEEN -> true
           | Some _ -> false
-          | None -> P.is_capture pos move && P.see_ge pos move 1)
+          | None -> P.see_ge pos move 1)
         |> List.filter ~f:(fun move ->
           let move_gain =
             match P.piece_on pos (T.move_dst move) with
@@ -463,10 +463,7 @@ let rec qsearch pos alpha beta is_white ply history ~stats ~qdepth ~check_depth 
     then if in_check then -(T.value_mate - ply) else alpha
     else (
       let sorted_moves =
-        ordered_moves_by_score moves ~score:(fun m ->
-          if in_check
-          then 2000000 + capture_order_score pos m
-          else 2000000 + capture_order_score pos m)
+        ordered_moves_by_score moves ~score:(fun m -> 2000000 + capture_order_score pos m)
       in
       let rec loop alpha = function
         | [] -> alpha
