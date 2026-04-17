@@ -690,7 +690,11 @@ let rec pvSearch
           K.add_killer killers ply move;
           History.update history_tbl move remaining_depth (P.moved_piece_exn pos move);
           List.iter quiet_moves ~f:(fun quiet_move ->
-            History.penalize history_tbl quiet_move remaining_depth));
+            History.penalize
+              history_tbl
+              quiet_move
+              remaining_depth
+              (P.moved_piece_exn pos quiet_move)));
         ignore
         @@ TT.store
              tt
