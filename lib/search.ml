@@ -17,6 +17,7 @@ let null_move_reduction = 3
 let qsearch_max_depth = 12
 let qsearch_check_depth = 2
 let qsearch_delta_margin = T.queen_value + T.pawn_value
+let qsearch_see_threshold = T.pawn_value / 2
 let lmr_depth_threshold = 3
 let lmr_move_threshold = 3
 let root_search_ply = 1
@@ -450,12 +451,15 @@ let rec qsearch pos alpha beta is_white ply history ~stats ~qdepth ~check_depth 
           match T.get_ppt move with
           | Some T.QUEEN -> true
           | Some _ -> false
-          | None -> P.see_ge pos move 1)
+          | None -> P.see_ge pos move qsearch_see_threshold)
         |> List.filter ~f:(fun move ->
           let move_gain =
             match P.piece_on pos (T.move_dst move) with
             | Some p -> T.piece_value p
-            | None -> if T.is_promotion move then T.queen_value else 0
+            | None ->
+              (match T.get_ppt move with
+               | Some ppt -> T.piece_type_value ppt
+               | None -> 0)
           in
           stand_pat + move_gain + qsearch_delta_margin > alpha)
     in
