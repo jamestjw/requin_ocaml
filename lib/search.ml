@@ -563,7 +563,7 @@ let rec pvSearch
         -1
         * pvSearch
             (P.do_null_move pos)
-            (curr_ply + null_move_reduction)
+            (curr_ply + 1 + null_move_reduction)
             max_depth
             (-beta)
             (-beta + 1)
@@ -574,7 +574,7 @@ let rec pvSearch
             ~may_prune
             ~tt
             ~killers
-            ~is_null_window
+            ~is_null_window:true
             ~is_pv:false
             ~history_tbl
       in
