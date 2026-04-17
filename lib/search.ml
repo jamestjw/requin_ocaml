@@ -445,7 +445,7 @@ let rec qsearch pos alpha beta is_white ply history ~stats ~qdepth ~check_depth 
       if in_check
       then generate_moves pos
       else
-        generate_moves pos
+        generated_capture_moves pos
         |> List.filter ~f:(fun move ->
           match T.get_ppt move with
           | Some T.QUEEN -> true
