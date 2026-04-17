@@ -555,20 +555,15 @@ let rec pvSearch
       | None -> offset * Eval.evaluate pos ()
     in
     let eval_value = get_eval_value tt_entry in
+    let is_in_check = P.is_in_check pos in
     let maybe_attempt_nmp pos =
       let stm = P.side_to_move pos in
-      let has_non_pawn_material =
-        P.count_by_colour_and_pt pos stm T.KNIGHT
-        + P.count_by_colour_and_pt pos stm T.BISHOP
-        + P.count_by_colour_and_pt pos stm T.ROOK
-        + P.count_by_colour_and_pt pos stm T.QUEEN
-        > 0
-      in
+      let has_non_pawn_material = P.non_pawn_material_for_colour pos stm > 0 in
       let may_do_nmp =
         (* TODO: check for zugzwang, we could do something simple like check if there
-       are only kings and pawns *)
+        are only kings and pawns *)
         remaining_depth >= null_move_reduction
-        && (not (P.is_in_check pos))
+        && (not is_in_check)
         && (not is_pv)
         && has_non_pawn_material
         && eval_value >= beta
@@ -622,7 +617,6 @@ let rec pvSearch
     let search move alpha beta ~is_null_window ~is_pv =
       search_with_ply move alpha beta 0 ~is_null_window ~is_pv
     in
-    let is_in_check = P.is_in_check pos in
     let alpha_orig = alpha in
     let do_move (alpha, best_move, is_first_move, idx, quiet_moves) stage move =
       let is_quiet = not (P.is_capture pos move || T.is_promotion move) in
@@ -740,12 +734,12 @@ let rec pvSearch
       | Continue_or_stop.Stop (score, m, cut, _, _) -> score, m, cut
     in
     (* Try to get an early exit score from the TT entry, also evaluates the hash
-    move if it exists *)
+       move if it exists *)
     let process_tt_entry depth (tt_entry : TT.entry option) alpha =
       match tt_entry with
       | Some tt_entry ->
         (* TODO: Unify TT hash-move handling with the main move loop so the move picker
-         is the single path responsible for searching ordered moves. *)
+           is the single path responsible for searching ordered moves. *)
         stats.tt_hits <- stats.tt_hits + 1;
         if tt_entry.depth >= depth
         then (
@@ -777,7 +771,6 @@ let rec pvSearch
          | Some _, _ -> score, alpha, false
          | _, (TT.BOUND_EXACT | TT.BOUND_LOWER)
            when T.move_not_none tt_entry.move && P.legal pos tt_entry.move ->
-           (* Search hash move *)
            let score, _, is_cut =
              do_move' alpha Stage_hash tt_entry.move ~is_first_move:true ~idx:0
            in
