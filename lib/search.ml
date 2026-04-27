@@ -310,12 +310,9 @@ let populate_capture_buckets picker =
     let good_captures, bad_captures =
       generated_capture_moves picker.pos
       |> List.fold ~init:([], []) ~f:(fun (good_acc, bad_acc) move ->
-        if P.is_capture_stage picker.pos move
-        then
-          if T.is_promotion move || P.see_ge picker.pos move 1
-          then move :: good_acc, bad_acc
-          else good_acc, move :: bad_acc
-        else good_acc, bad_acc)
+        if T.is_promotion move || P.see_ge picker.pos move 1
+        then move :: good_acc, bad_acc
+        else good_acc, move :: bad_acc)
     in
     picker.good_captures
     <- Some (ordered_moves_by_score good_captures ~score:(capture_order_score picker.pos));
