@@ -4,7 +4,9 @@ WORKDIR /work
 
 COPY dune-project requin_ocaml.opam ./
 
-RUN opam update && opam install -y dune . --deps-only
+RUN opam update \
+ && opam install -y dune \
+ && opam install -y . --deps-only
 
 COPY . .
 
