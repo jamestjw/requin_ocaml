@@ -25,11 +25,11 @@ ENV PYTHONDONTWRITEBYTECODE=1
 RUN mkdir -p /app/engines
 COPY --from=ocaml-builder /work/_build/default/bin/main.exe /app/engines/requin
 
-RUN git clone https://github.com/lichess-bot-devs/lichess-bot.git
+RUN git clone https://github.com/jamestjw/lichess-bot.git
 
 WORKDIR /app/lichess-bot
 
-RUN git checkout 5a9bb63199d5b8f118a1963d6a49a6bf06a4e57a
+RUN git checkout master
 
 RUN python3 -m pip install --no-cache-dir -r requirements.txt
 
