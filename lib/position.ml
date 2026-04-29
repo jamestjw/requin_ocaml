@@ -839,22 +839,23 @@ module Position = struct
                  |> BB.sq_and_bb dst)
             in
             let is_single_push =
-              Types.equal_square
-                (Types.sq_plus_dir src (Types.pawn_push_direction us) |> Stdlib.Option.get)
-                dst
+              Option.value_map
+                (Types.sq_plus_dir src (Types.pawn_push_direction us))
+                ~default:false
+                ~f:(fun sq -> Types.equal_square sq dst)
               && is_empty pos dst
             in
             let is_double_push =
-              Types.equal_square
-                (Types.sq_plus_dir_twice src (Types.pawn_push_direction us)
-                 |> Stdlib.Option.get)
-                dst
+              Option.value_map
+                (Types.sq_plus_dir_twice src (Types.pawn_push_direction us))
+                ~default:false
+                ~f:(fun sq -> Types.equal_square sq dst)
               && (Types.equal_rank Types.RANK_2 @@ Types.relative_rank_of_sq us src)
               && is_empty pos dst
-              && is_empty
-                   pos
-                   (Types.sq_sub_dir dst (Types.pawn_push_direction us)
-                    |> Stdlib.Option.get)
+              && Option.value_map
+                   (Types.sq_sub_dir dst (Types.pawn_push_direction us))
+                   ~default:false
+                   ~f:(is_empty pos)
             in
             (is_pawn_capture || is_single_push || is_double_push) && evasion_allows_dst ())
           else if
@@ -877,9 +878,10 @@ module Position = struct
                  |> BB.sq_and_bb dst)
             in
             let is_push_promo =
-              Types.equal_square
-                (Types.sq_plus_dir src (Types.pawn_push_direction us) |> Stdlib.Option.get)
-                dst
+              Option.value_map
+                (Types.sq_plus_dir src (Types.pawn_push_direction us))
+                ~default:false
+                ~f:(fun sq -> Types.equal_square sq dst)
               && is_empty pos dst
             in
             (is_capture_promo || is_push_promo) && evasion_allows_dst ())
@@ -892,15 +894,16 @@ module Position = struct
                     ~default:false
                     ~f:(Types.equal_square dst))
           then false
-          else (
-            let captured_sq =
-              Types.sq_sub_dir dst (Types.pawn_push_direction us) |> Stdlib.Option.get
-            in
-            BB.bb_not_zero (BB.pawn_attacks_bb_from_sq us src |> BB.sq_and_bb dst)
-            && is_empty pos dst
-            && Option.value_map (piece_on pos captured_sq) ~default:false ~f:(fun p ->
-              Types.equal_piece p (Types.mk_piece them Types.PAWN))
-            && legal pos m)
+          else
+            Option.value_map
+              (Types.sq_sub_dir dst (Types.pawn_push_direction us))
+              ~default:false
+              ~f:(fun captured_sq ->
+                BB.bb_not_zero (BB.pawn_attacks_bb_from_sq us src |> BB.sq_and_bb dst)
+                && is_empty pos dst
+                && Option.value_map (piece_on pos captured_sq) ~default:false ~f:(fun p ->
+                  Types.equal_piece p (Types.mk_piece them Types.PAWN))
+                && legal pos m)
         | Types.CASTLING ->
           if
             (not (Types.equal_piece_type piece_type Types.KING))
