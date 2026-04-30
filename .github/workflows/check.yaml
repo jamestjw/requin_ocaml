@@ -35,3 +35,6 @@ jobs:
 
       - name: "Run tests"
         run: opam exec -- dune runtest
+
+      - name: "Run perft suite (depth 4)"
+        run: opam exec -- dune exec bin/perft.exe --profile=release -- suite 4

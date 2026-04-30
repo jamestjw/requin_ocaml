@@ -6,3 +6,7 @@
 (executable
  (name bench)
  (libraries requin))
+
+(executable
+ (name perft)
+ (libraries requin))
