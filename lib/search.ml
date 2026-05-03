@@ -25,9 +25,15 @@ let reverse_futility_margin_1 = T.bishop_value
 let reverse_futility_margin_2 = T.rook_value + T.knight_value
 
 let lmr_reduction remaining_depth move_index =
-  let depth_bonus = Int.max 0 ((remaining_depth - lmr_depth_threshold) / 2) in
-  let move_bonus = Int.max 0 ((move_index - lmr_move_threshold) / 4) in
-  Int.min (remaining_depth - 1) (1 + depth_bonus + move_bonus)
+  let reduction =
+    0.75
+    +. ((Float.log (Float.of_int remaining_depth) *. Float.log (Float.of_int move_index))
+        /. 2.25)
+    |> Stdlib.int_of_float
+    |> Int.max 1
+    |> Int.min 8
+  in
+  Int.min (remaining_depth - 1) reduction
 ;;
 
 let history_lmr_bonus history_score = if history_score >= 2000 then 1 else 0
