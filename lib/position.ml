@@ -34,6 +34,7 @@ module Position = struct
       check_squares : BB.t Map.M(PieceTypeCmp).t
     ; captured_piece : Types.piece option
     ; repetition : int
+    ; mutable static_eval : Types.value
     }
 
   type t =
@@ -206,6 +207,17 @@ module Position = struct
   let pawn_key { st = { pawn_key; _ }; _ } = pawn_key
   let material_key { st = { material_key; _ }; _ } = material_key
   let psq_score { st = { psq_score; _ }; _ } = psq_score
+
+  let static_eval ({ st; _ } as pos) ~compute =
+    if st.static_eval = Types.value_none
+    then (
+      let value = compute pos in
+      st.static_eval <- value;
+      value)
+    else st.static_eval
+  ;;
+
+  let set_static_eval { st; _ } value = st.static_eval <- value
 
   let non_pawn_material_for_colour { st = { non_pawn_material; _ }; _ } colour =
     Utils.map_find non_pawn_material colour ~default:0
@@ -1133,6 +1145,7 @@ module Position = struct
     ; check_squares = Map.empty (module PieceTypeCmp)
     ; captured_piece = None
     ; repetition = 0
+    ; static_eval = Types.value_none
     }
   ;;
 
@@ -1147,11 +1160,14 @@ module Position = struct
     ; check_squares = Map.empty (module PieceTypeCmp)
     ; captured_piece = None
     ; repetition = 0
+    ; static_eval = Types.value_none
     }
   ;;
 
   (* Creates a full copy of `st` for null moves *)
-  let new_full_copy_st_from_prev st = { st with previous = Some st }
+  let new_full_copy_st_from_prev st =
+    { st with previous = Some st; static_eval = Types.value_none }
+  ;;
 
   (* Three possible values,
      - 0 : No repetition

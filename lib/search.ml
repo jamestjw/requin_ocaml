@@ -44,6 +44,11 @@ let initial_alpha = -T.value_mate - 1
 let initial_beta = T.value_mate + 1
 let generate_moves pos = M.generate_legal pos
 
+let static_eval pos is_white =
+  let offset = if is_white then 1 else -1 in
+  offset * P.static_eval pos ~compute:(fun pos -> Eval.evaluate pos ())
+;;
+
 let score_is_resolved_mate score completed_depth =
   let mate_distance = T.value_mate - Int.abs score in
   Int.abs score > T.value_mate_in_max_ply && mate_distance <= completed_depth
@@ -427,9 +432,8 @@ let pv_from_tt (pos : P.t) tt max_len =
 let rec qsearch pos alpha beta is_white ply history ~stats ~qdepth ~check_depth =
   stats.qnodes <- stats.qnodes + 1;
   let in_check = P.is_in_check pos in
-  let offset = if is_white then 1 else -1 in
   if qdepth <= 0 || (in_check && check_depth <= 0)
-  then if in_check then offset * Eval.evaluate pos () else alpha
+  then if in_check then static_eval pos is_white else alpha
   else if in_check
   then (
     (* In-check path: don't compute stand_pat — none of the branches below use
@@ -465,7 +469,7 @@ let rec qsearch pos alpha beta is_white ply history ~stats ~qdepth ~check_depth 
       in
       loop alpha sorted_moves))
   else (
-    let stand_pat = offset * Eval.evaluate pos () in
+    let stand_pat = static_eval pos is_white in
     let alpha = if stand_pat > alpha then stand_pat else alpha in
     if stand_pat >= beta
     then beta
@@ -567,11 +571,10 @@ let rec pvSearch
 
   (* Attempt null move pruning if we can, return an optional score if we get a cutoff *)
   let remaining_depth = max_depth - curr_ply in
-  let offset = if is_white then 1 else -1 in
   if P.is_draw pos ply
   then T.value_draw
   else if curr_ply = T.max_ply
-  then offset * Eval.evaluate pos ()
+  then static_eval pos is_white
   else (
     stats.tt_probes <- stats.tt_probes + 1;
     let tt_entry = TT.probe tt (P.key pos) in
@@ -581,8 +584,10 @@ let rec pvSearch
     in
     let get_eval_value tt_entry =
       match eval_value_from_tt tt_entry with
-      | Some eval_value -> eval_value
-      | None -> offset * Eval.evaluate pos ()
+      | Some eval_value ->
+        P.set_static_eval pos ((if is_white then 1 else -1) * eval_value);
+        eval_value
+      | None -> static_eval pos is_white
     in
     let eval_value = get_eval_value tt_entry in
     let is_in_check = P.is_in_check pos in
