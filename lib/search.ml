@@ -21,8 +21,11 @@ let qsearch_see_threshold = T.pawn_value / 2
 let lmr_depth_threshold = 3
 let lmr_move_threshold = 3
 let root_search_ply = 1
-let reverse_futility_margin_1 = T.bishop_value
-let reverse_futility_margin_2 = T.rook_value + T.knight_value
+let reverse_futility_margin = function
+  | 1 -> T.bishop_value
+  | 2 -> T.rook_value + T.knight_value
+  | depth -> 300 * depth
+;;
 
 let lmr_reduction remaining_depth move_index =
   let reduction =
@@ -835,16 +838,9 @@ let rec pvSearch
     else if
       (not is_in_check)
       && (not is_pv)
-      && remaining_depth = 1
+      && remaining_depth <= 3
       && may_prune
-      && eval_value >= beta + reverse_futility_margin_1
-    then beta
-    else if
-      (not is_in_check)
-      && (not is_pv)
-      && remaining_depth = 2
-      && may_prune
-      && eval_value >= beta + reverse_futility_margin_2
+      && eval_value >= beta + reverse_futility_margin remaining_depth
     then beta
     else if
       (not is_in_check)
