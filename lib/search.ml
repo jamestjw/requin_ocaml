@@ -15,9 +15,9 @@ let parallel = 8
 (* TODO: make this dynamic *)
 let null_move_reduction = 3
 let qsearch_max_depth = 12
-let qsearch_check_depth = 2
+let qsearch_check_depth = 1
 let qsearch_delta_margin = T.queen_value + T.pawn_value
-let qsearch_see_threshold = T.pawn_value / 2
+let qsearch_see_threshold = T.pawn_value
 let lmr_depth_threshold = 3
 let lmr_move_threshold = 3
 let root_search_ply = 1
