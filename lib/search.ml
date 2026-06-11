@@ -599,8 +599,10 @@ let rec pvSearch
         eval_value
       | None -> static_eval pos is_white
     in
-    let eval_value = get_eval_value tt_entry in
     let is_in_check = P.is_in_check pos in
+    (* All consumers of the static eval (NMP, RFP, TT eval slot) are gated on
+       not being in check, so don't pay for an eval here when in check. *)
+    let eval_value = if is_in_check then T.value_none else get_eval_value tt_entry in
     let maybe_attempt_nmp pos =
       let stm = P.side_to_move pos in
       let has_non_pawn_material = P.non_pawn_material_for_colour pos stm > 0 in
