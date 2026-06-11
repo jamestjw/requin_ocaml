@@ -555,19 +555,21 @@ let rec pvSearch
   stats.nodes <- stats.nodes + 1;
   (* Mate scores are ply-relative (distance to mate). We normalize when storing
      so TT entries remain comparable across different search plies, and restore
-     when reading. *)
-  let value_to_tt value curr_ply =
+     when reading. Distances must use [ply] (real distance from the root, +1
+     per move) and never [curr_ply], which jumps by more than one under
+     NMP/LMR reductions. *)
+  let value_to_tt value ply =
     if value > T.value_mate_in_max_ply
-    then value + curr_ply
+    then value + ply
     else if value < T.value_mated_in_max_ply
-    then value - curr_ply
+    then value - ply
     else value
   in
-  let value_from_tt value curr_ply =
+  let value_from_tt value ply =
     if value > T.value_mate_in_max_ply
-    then value - curr_ply
+    then value - ply
     else if value < T.value_mated_in_max_ply
-    then value + curr_ply
+    then value + ply
     else value
   in
   (* TODO: Can I add compile time constant for debugging? *)
@@ -755,7 +757,7 @@ let rec pvSearch
                ~m:move
                ~depth:remaining_depth
                ~eval_value
-               ~value:(value_to_tt score curr_ply)
+               ~value:(value_to_tt score ply)
                ~bound:TT.BOUND_LOWER;
           Continue_or_stop.Stop (beta, best_move, true, idx, quiet_moves))
         else if score > alpha
@@ -792,7 +794,7 @@ let rec pvSearch
           | TT.BOUND_UPPER -> stats.tt_upper <- stats.tt_upper + 1
           | TT.BOUND_NONE -> ())
         else ();
-        let tt_value = value_from_tt tt_entry.value curr_ply in
+        let tt_value = value_from_tt tt_entry.value ply in
         let score =
           match tt_entry.depth >= depth, tt_entry.bound with
           | true, TT.BOUND_EXACT ->
@@ -876,7 +878,7 @@ let rec pvSearch
            (match next_move move_picker with
             | None ->
               (* Either draw or mate *)
-              if P.is_in_check pos then -(T.value_mate - curr_ply) else T.value_draw
+              if P.is_in_check pos then -(T.value_mate - ply) else T.value_draw
             | Some (first_stage, first_move) ->
               let rec loop_moves
                         (acc : int * T.move option * bool * int * T.move list)
@@ -916,7 +918,7 @@ let rec pvSearch
                        ~m
                        ~depth:remaining_depth
                        ~eval_value
-                       ~value:(value_to_tt score curr_ply)
+                       ~value:(value_to_tt score ply)
                        ~bound:TT.BOUND_EXACT
                 | None, _ ->
                   (* It's fine to set an upper bound even if we are doing a null move search *)
@@ -927,7 +929,7 @@ let rec pvSearch
                        ~m:T.none_move
                        ~depth:remaining_depth
                        ~eval_value
-                       ~value:(value_to_tt score curr_ply)
+                       ~value:(value_to_tt score ply)
                        ~bound:TT.BOUND_UPPER
                 | _ -> ());
               score))))
