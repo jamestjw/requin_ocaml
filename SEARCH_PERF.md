@@ -122,6 +122,22 @@ Items 1–7 should net ~15–20% NPS plus measurable elo at <20h total.
 Items 9 and 10 are project-scale undertakings; defer until the smaller
 wins are exhausted.
 
+## Note: backlog estimates are stale since the int64 bitboard migration
+
+Bitboards and zobrist keys now use `int64` via `lib/u64.ml` instead of
+`Unsigned.UInt64` C stubs (bench suite 9.7s -> 2.3s, ~4x NPS). The
+NPS-percentage estimates below (#2, #3, #7, #9) were measured against the
+old allocation profile and should be re-profiled before being trusted.
+Related follow-ups:
+
+- The release `ocamlopt_flags` include `-O3`, which is a no-op on this
+  non-flambda switch (`ocamlopt -config` reports `flambda: false`). An
+  flambda opam switch would unlock real cross-function unboxing/inlining.
+- Attack/zobrist tables are `int64 array` (boxed elements); a
+  `Bigarray.int64` would make them flat. Profile first.
+- `bb_to_square` computes the index with a recursive halving loop
+  (`log_2`); a de Bruijn multiply would be O(1).
+
 ## Follow-ups from the June 2026 search-bug audit
 
 The audit fixed the root PVS gate, hash-move double-search, mate-ply
