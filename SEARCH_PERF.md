@@ -145,12 +145,14 @@ encoding, max_ply, qsearch draw detection, the unsound depth-2 futility
 prune, and added depth-0 TT cutoffs (suite: 725k -> 491k nodes). Items
 discovered but deliberately left open:
 
-- **NMP zugzwang blindness on quiet mates**: in mate-study positions
-  (e.g. the `white_mate_in_2` bench case) the defender can null-move-prune
-  away a forced mate because the attacker's quiet mating move is invisible
-  to qsearch after the null. Candidate fixes: generate quiet checks at the
-  first qsearch ply (movegen already has `QUIET_CHECKS`), or an NMP
-  verification search. Either needs a full bench A/B.
+- **RESOLVED — eval-based pruning blindness on quiet mates**: RFP/NMP
+  trusted the raw static eval and pruned away forced-mate refutations in
+  mate studies (`white_mate_in_2`, `white_checkmate_in_two_v2`). Fixed by
+  (a) clamping the pruning eval with the TT value when its bound supports
+  the direction, and (b) generating quiet checks at the first qsearch ply.
+  Cost: ~0.4% suite nodes combined. Reminder: only dev-profile
+  `dune runtest` exercises the assert-based engine tests (release strips
+  them via `-noassert`).
 - **Root fail-high early break regresses**: cutting off the root scout
   loop after an aspiration fail-high was tried and reverted — the extra
   scouting warms the TT for the full-window re-search and is a net win.
