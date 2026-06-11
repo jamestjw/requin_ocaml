@@ -843,15 +843,6 @@ let rec pvSearch
       && may_prune
       && eval_value >= beta + reverse_futility_margin remaining_depth
     then beta
-    else if
-      (not is_in_check)
-      && (not is_null_window)
-      && remaining_depth = 2
-      && may_prune
-      && eval_value + T.futility_margin_2 < alpha
-    then
-      (* Same as above *)
-      alpha
     else (
       match process_tt_entry remaining_depth tt_entry alpha with
       | Some score, _, _ -> score
