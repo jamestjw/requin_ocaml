@@ -986,7 +986,10 @@ let get_best_move ?(instrumentation = default_instrumentation) (pos : P.t) max_d
             root_search_move move alpha (alpha + 1) ~is_null_window:true ~is_pv:false
           in
           let score, extra_stats =
-            if probe_score >= alpha && beta - alpha > 1
+            (* Fail-hard: a probe returning exactly alpha means the move failed
+               low, so only a strictly greater score warrants a full-window
+               re-search. *)
+            if probe_score > alpha && beta - alpha > 1
             then (
               let full_score, full_stats =
                 root_search_move move alpha beta ~is_null_window:false ~is_pv:true
