@@ -501,8 +501,18 @@ let rec qsearch pos alpha beta is_white ply ~stats ~qdepth ~check_depth =
             | Some _ -> false
             | None -> P.see_ge pos move qsearch_see_threshold)
         in
+        (* Quiet checks at the first qsearch ply only: a null-move search that
+           lands directly in qsearch is otherwise blind to mating threats
+           delivered by quiet moves, so the side to move can stand pat its way
+           past a forced mate (zugzwang-style positions). *)
+        let quiet_checks =
+          if qdepth = qsearch_max_depth
+          then
+            M.generate M.QUIET_CHECKS pos |> List.filter ~f:(is_legal_generated_move pos)
+          else []
+        in
         let moves =
-          captures
+          captures @ quiet_checks
           |> List.filter ~f:(fun move ->
             let move_gain =
               match P.piece_on pos (T.move_dst move) with
