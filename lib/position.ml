@@ -1,7 +1,7 @@
 open Base
 open Bitboard
 open Types
-open Unsigned
+module UInt64 = U64.UInt64
 module BB = Bitboard
 
 module Position = struct

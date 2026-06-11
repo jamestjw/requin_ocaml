@@ -17,7 +17,7 @@
 *)
 
 open Base
-open Unsigned
+module UInt64 = U64.UInt64
 open Types
 open Utils
 

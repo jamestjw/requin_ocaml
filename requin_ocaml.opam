@@ -11,7 +11,6 @@ bug-reports: "https://github.com/jamestjw/requin_ocaml/issues"
 depends: [
   "ocaml"
   "dune" {>= "3.15"}
-  "integers"
   "ppx_jane"
   "ppx_deriving"
   "ppx_let"

@@ -1,6 +1,6 @@
 open Base
 open Types
-open Unsigned
+module UInt64 = U64.UInt64
 
 (* Inspired by https://github.com/kobolabs/stockfish/blob/master/tt.h *)
 
@@ -62,7 +62,9 @@ let mk () =
 let cluster_idx { size; _ } key =
   (* Only take the lower 32 bits. We must use modulo here because the cluster
      count is not a power of two. *)
-  UInt64.to_uint32 key |> UInt32.to_int |> fun key32 -> Int.rem key32 size
+  UInt64.logand key (UInt64.of_int 0xFFFFFFFF)
+  |> UInt64.to_int
+  |> fun key32 -> Int.rem key32 size
 ;;
 
 (* Overwrites the entire transposition table with zeroes *)
