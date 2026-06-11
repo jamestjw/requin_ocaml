@@ -1,6 +1,4 @@
-# The -flambda variant matters: the release ocamlopt flags use -O3, which is
-# a no-op on non-flambda compilers.
-FROM ocaml/opam:debian-11-ocaml-5.1-flambda AS ocaml-builder
+FROM ocaml/opam:debian-12-ocaml-5.3-flambda AS ocaml-builder
 
 WORKDIR /work
 
@@ -14,7 +12,7 @@ COPY . .
 
 RUN opam exec -- dune build @install --profile=release
 
-FROM python:3.10-slim-bullseye
+FROM python:3.10-slim-bookworm
 
 RUN apt-get update \
  && apt-get install -y --no-install-recommends git \
