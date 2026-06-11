@@ -122,6 +122,28 @@ Items 1–7 should net ~15–20% NPS plus measurable elo at <20h total.
 Items 9 and 10 are project-scale undertakings; defer until the smaller
 wins are exhausted.
 
+## Follow-ups from the June 2026 search-bug audit
+
+The audit fixed the root PVS gate, hash-move double-search, mate-ply
+encoding, max_ply, qsearch draw detection, the unsound depth-2 futility
+prune, and added depth-0 TT cutoffs (suite: 725k -> 491k nodes). Items
+discovered but deliberately left open:
+
+- **NMP zugzwang blindness on quiet mates**: in mate-study positions
+  (e.g. the `white_mate_in_2` bench case) the defender can null-move-prune
+  away a forced mate because the attacker's quiet mating move is invisible
+  to qsearch after the null. Candidate fixes: generate quiet checks at the
+  first qsearch ply (movegen already has `QUIET_CHECKS`), or an NMP
+  verification search. Either needs a full bench A/B.
+- **Root fail-high early break regresses**: cutting off the root scout
+  loop after an aspiration fail-high was tried and reverted — the extra
+  scouting warms the TT for the full-window re-search and is a net win.
+- **Depth-1 LMP regresses**: tried and reverted (+7% suite nodes).
+- `Eval.evaluate`'s doc comment claims side-to-move perspective but it
+  returns white-perspective (search converts at `lib/search.ml:57`).
+- `adjust_key50` (`lib/position.ml`) folds the rule50 bucket with
+  `logor`; XOR would be cleaner/unbiased.
+
 ## Workflow notes
 
 - Use `dune exec bin/bench.exe --profile=release` before/after each change
