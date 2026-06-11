@@ -1,4 +1,6 @@
-FROM ocaml/opam:debian-11-ocaml-5.1 AS ocaml-builder
+# The -flambda variant matters: the release ocamlopt flags use -O3, which is
+# a no-op on non-flambda compilers.
+FROM ocaml/opam:debian-11-ocaml-5.1-flambda AS ocaml-builder
 
 WORKDIR /work
 
