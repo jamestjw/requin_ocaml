@@ -324,6 +324,8 @@ let populate_capture_buckets picker =
   | _ ->
     let good_captures, bad_captures =
       generated_capture_moves picker.pos
+      |> List.filter ~f:(fun move ->
+        not (Option.value_map picker.hash_move ~default:false ~f:(T.equal_move move)))
       |> List.fold ~init:([], []) ~f:(fun (good_acc, bad_acc) move ->
         if T.is_promotion move || P.see_ge picker.pos move 1
         then move :: good_acc, bad_acc
@@ -782,18 +784,12 @@ let rec pvSearch
         else
           Continue_or_stop.Continue (alpha, best_move, false, idx + 1, move :: quiet_moves))
     in
-    let do_move' alpha stage move ~is_first_move ~idx =
-      match do_move (alpha, None, is_first_move, idx, []) stage move with
-      | Continue_or_stop.Continue (score, m, _, _, _) -> score, m, false
-      | Continue_or_stop.Stop (score, m, cut, _, _) -> score, m, cut
-    in
-    (* Try to get an early exit score from the TT entry, also evaluates the hash
-       move if it exists *)
-    let process_tt_entry depth (tt_entry : TT.entry option) alpha =
+    (* Try to get an early-exit score from the TT entry. The hash move itself
+       is searched by the move picker (Stage_hash), which is the single path
+       responsible for searching ordered moves. *)
+    let process_tt_entry depth (tt_entry : TT.entry option) =
       match tt_entry with
       | Some tt_entry ->
-        (* TODO: Unify TT hash-move handling with the main move loop so the move picker
-           is the single path responsible for searching ordered moves. *)
         stats.tt_hits <- stats.tt_hits + 1;
         if tt_entry.depth >= depth
         then (
@@ -816,21 +812,8 @@ let rec pvSearch
         (match score with
          | Some _ -> stats.tt_cutoffs <- stats.tt_cutoffs + 1
          | None -> ());
-        let alpha =
-          match tt_entry.depth >= depth, tt_entry.bound with
-          | true, TT.BOUND_LOWER -> Int.max alpha tt_value
-          | _ -> alpha
-        in
-        (match score, tt_entry.bound with
-         | Some _, _ -> score, alpha, false
-         | _, (TT.BOUND_EXACT | TT.BOUND_LOWER)
-           when T.move_not_none tt_entry.move && P.legal pos tt_entry.move ->
-           let score, _, is_cut =
-             do_move' alpha Stage_hash tt_entry.move ~is_first_move:true ~idx:0
-           in
-           if is_cut then Some score, alpha, true else None, score, true
-         | _, _ -> score, alpha, false)
-      | None -> None, alpha, false
+        score
+      | None -> None
     in
     (* This takes into account the 50 move rule and threehold repetition *)
     if remaining_depth <= 0
@@ -853,20 +836,17 @@ let rec pvSearch
       && eval_value >= beta + reverse_futility_margin remaining_depth
     then beta
     else (
-      match process_tt_entry remaining_depth tt_entry alpha with
-      | Some score, _, _ -> score
-      | _, alpha, found_hash_move ->
+      match process_tt_entry remaining_depth tt_entry with
+      | Some score -> score
+      | None ->
         (match maybe_attempt_nmp pos with
          | Some score -> score
-         | _ ->
+         | None ->
            let hash_move =
-             if found_hash_move
-             then None
-             else
-               Option.bind tt_entry ~f:(fun entry ->
-                 if T.move_not_none entry.move && P.legal pos entry.move
-                 then Some entry.move
-                 else None)
+             Option.bind tt_entry ~f:(fun entry ->
+               if T.move_not_none entry.move && P.legal pos entry.move
+               then Some entry.move
+               else None)
            in
            let move_picker =
              mk_move_picker
@@ -896,14 +876,7 @@ let rec pvSearch
                   score, best_move, true, next_idx
               in
               let score, best_move, is_cut, _ =
-                loop_moves
-                  ( alpha
-                  , None
-                  , not found_hash_move
-                  , (if found_hash_move then 1 else 0)
-                  , [] )
-                  first_stage
-                  first_move
+                loop_moves (alpha, None, true, 0, []) first_stage first_move
               in
               if (not is_cut) && score <= alpha_orig
               then stats.fail_low <- stats.fail_low + 1;
