@@ -800,11 +800,11 @@ let rec pvSearch
           | TT.BOUND_NONE -> ())
         else ();
         let tt_value = value_from_tt tt_entry.value ply in
+        (* No TT cutoffs at PV nodes: a truncated PV node returns a score the
+           parent treats as exact while the line below it is lost. *)
         let score =
-          match tt_entry.depth >= depth, tt_entry.bound with
-          | true, TT.BOUND_EXACT ->
-            (* TODO: Check if we are at a Pv node before returning this *)
-            Some tt_value
+          match (not is_pv) && tt_entry.depth >= depth, tt_entry.bound with
+          | true, TT.BOUND_EXACT -> Some tt_value
           | true, TT.BOUND_LOWER when tt_value >= beta -> Some tt_value
           | true, TT.BOUND_UPPER when tt_value <= alpha -> Some tt_value
           | _, _ -> None
