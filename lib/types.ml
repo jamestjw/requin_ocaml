@@ -77,9 +77,7 @@ module Types = struct
      a module. *)
 
   let max_moves = 256
-  let max_ply = 25
-
-  (* let max_ply = 246 *)
+  let max_ply = 128
   let value_zero = 0
   let value_draw = 0
   let value_none = 32002

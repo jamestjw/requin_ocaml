@@ -581,7 +581,7 @@ let rec pvSearch
   let remaining_depth = max_depth - curr_ply in
   if P.is_draw pos ply
   then T.value_draw
-  else if curr_ply = T.max_ply
+  else if curr_ply >= T.max_ply
   then static_eval pos is_white
   else (
     stats.tt_probes <- stats.tt_probes + 1;
