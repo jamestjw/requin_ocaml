@@ -7,9 +7,7 @@ let startpos = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
 (* Standard perft test suite from the Chess Programming Wiki.
    Node counts are well-known and any deviation indicates a move-gen bug. *)
 let suite =
-  [ ( "startpos"
-    , startpos
-    , [ 1, 20; 2, 400; 3, 8902; 4, 197281; 5, 4865609; 6, 119060324 ] )
+  [ "startpos", startpos, [ 1, 20; 2, 400; 3, 8902; 4, 197281; 5, 4865609; 6, 119060324 ]
   ; ( "kiwipete"
     , "r3k2r/p1ppqpb1/bn2pnp1/3PN3/1p2P3/2N2Q1p/PPPBBPPP/R3K2R w KQkq - 0 1"
     , [ 1, 48; 2, 2039; 3, 97862; 4, 4085603; 5, 193690690 ] )
@@ -43,12 +41,7 @@ let run_one fen depth =
   let nodes = Perft.perft pos depth in
   let elapsed = Float.max 0.000001 (Stdlib.Sys.time () -. start) in
   let nps = Float.of_int nodes /. elapsed |> Int.of_float in
-  Stdlib.Printf.printf
-    "depth=%d nodes=%d time=%.3fs nps=%d\n"
-    depth
-    nodes
-    elapsed
-    nps;
+  Stdlib.Printf.printf "depth=%d nodes=%d time=%.3fs nps=%d\n" depth nodes elapsed nps;
   nodes
 ;;
 
@@ -111,7 +104,7 @@ let usage () =
 ;;
 
 let () =
-  match Array.to_list (Stdlib.Sys.argv) |> List.tl_exn with
+  match Array.to_list Stdlib.Sys.argv |> List.tl_exn with
   | [] -> run_suite 4
   | [ "suite" ] -> run_suite 4
   | [ "suite"; d ] -> run_suite (Int.of_string d)

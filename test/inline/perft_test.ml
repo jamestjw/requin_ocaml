@@ -81,11 +81,7 @@ let%test_unit "perft position4_mirror depth 3" =
 ;;
 
 let%test_unit "perft position5 depth 3" =
-  check
-    "position5"
-    "rnbq1k1r/pp1Pbppp/2p5/8/2B5/8/PPP1NnPP/RNBQK2R w KQ - 1 8"
-    3
-    62379
+  check "position5" "rnbq1k1r/pp1Pbppp/2p5/8/2B5/8/PPP1NnPP/RNBQK2R w KQ - 1 8" 3 62379
 ;;
 
 let%test_unit "perft position6 depth 3" =
