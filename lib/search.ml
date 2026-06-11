@@ -493,13 +493,16 @@ let rec qsearch pos alpha beta is_white ply ~stats ~qdepth ~check_depth =
       else if stand_pat + qsearch_delta_margin <= alpha
       then alpha
       else (
-        let moves =
+        let captures =
           generated_capture_moves pos
           |> List.filter ~f:(fun move ->
             match T.get_ppt move with
             | Some T.QUEEN -> true
             | Some _ -> false
             | None -> P.see_ge pos move qsearch_see_threshold)
+        in
+        let moves =
+          captures
           |> List.filter ~f:(fun move ->
             let move_gain =
               match P.piece_on pos (T.move_dst move) with
@@ -601,6 +604,25 @@ let rec pvSearch
     (* All consumers of the static eval (NMP, RFP, TT eval slot) are gated on
        not being in check, so don't pay for an eval here when in check. *)
     let eval_value = if is_in_check then T.value_none else get_eval_value tt_entry in
+    (* For the pruning gates (RFP, NMP), refine the static eval with the TT
+       value when its bound supports the direction: the search result is more
+       reliable than the eval in tactical positions (e.g. a side that is only
+       material down but getting mated). The raw [eval_value] is what gets
+       stored in the TT eval slot, never this corrected value. *)
+    let pruning_eval =
+      match tt_entry with
+      | Some entry
+        when (not is_in_check)
+             && entry.value <> T.value_none
+             && not (TT.equal_bound entry.bound TT.BOUND_NONE) ->
+        let tt_value = value_from_tt entry.value ply in
+        (match entry.bound with
+         | TT.BOUND_EXACT -> tt_value
+         | TT.BOUND_LOWER when tt_value > eval_value -> tt_value
+         | TT.BOUND_UPPER when tt_value < eval_value -> tt_value
+         | _ -> eval_value)
+      | _ -> eval_value
+    in
     let maybe_attempt_nmp pos =
       let stm = P.side_to_move pos in
       let has_non_pawn_material = P.non_pawn_material_for_colour pos stm > 0 in
@@ -611,7 +633,7 @@ let rec pvSearch
         && (not is_in_check)
         && (not is_pv)
         && has_non_pawn_material
-        && eval_value >= beta
+        && pruning_eval >= beta
         (* Add the following conditions
        - !is_cut_node, we are likely to get a cut off in, don't risk it
        - !(static eval > beta + 50 centipawns), because the position is so good, we are likely to get a cutoff anyway *)
@@ -823,7 +845,7 @@ let rec pvSearch
         && (not is_pv)
         && remaining_depth <= 3
         && may_prune
-        && eval_value >= beta + reverse_futility_margin remaining_depth
+        && pruning_eval >= beta + reverse_futility_margin remaining_depth
       then beta
       else (
         match maybe_attempt_nmp pos with
