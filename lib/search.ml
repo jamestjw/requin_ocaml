@@ -21,6 +21,7 @@ let qsearch_see_threshold = T.pawn_value
 let lmr_depth_threshold = 3
 let lmr_move_threshold = 3
 let root_search_ply = 1
+
 let reverse_futility_margin = function
   | 1 -> T.bishop_value
   | 2 -> T.rook_value + T.knight_value
@@ -30,7 +31,8 @@ let reverse_futility_margin = function
 let lmr_reduction remaining_depth move_index =
   let reduction =
     0.75
-    +. ((Float.log (Float.of_int remaining_depth) *. Float.log (Float.of_int move_index))
+    +. (Float.log (Float.of_int remaining_depth)
+        *. Float.log (Float.of_int move_index)
         /. 2.25)
     |> Stdlib.int_of_float
     |> Int.max 1
@@ -439,76 +441,25 @@ let pv_from_tt (pos : P.t) tt max_len =
 
 let rec qsearch pos alpha beta is_white ply history ~stats ~qdepth ~check_depth =
   stats.qnodes <- stats.qnodes + 1;
-  let in_check = P.is_in_check pos in
-  if qdepth <= 0 || (in_check && check_depth <= 0)
-  then if in_check then static_eval pos is_white else alpha
-  else if in_check
-  then (
-    (* In-check path: don't compute stand_pat — none of the branches below use
-       it when in_check, so the eval call would be wasted. *)
-    let moves = generate_moves pos in
-    if List.is_empty moves
-    then -(T.value_mate - ply)
-    else (
-      let sorted_moves =
-        ordered_moves_by_score moves ~score:(fun m -> 2000000 + capture_order_score pos m)
-      in
-      let rec loop alpha = function
-        | [] -> alpha
-        | m :: rest ->
-          let score =
-            -qsearch
-               (P.do_move' pos m)
-               (-beta)
-               (-alpha)
-               (not is_white)
-               (ply + 1)
-               (m :: history)
-               ~stats
-               ~qdepth:(qdepth - 1)
-               ~check_depth:(check_depth - 1)
-          in
-          if score >= beta
-          then (
-            stats.cutoffs <- stats.cutoffs + 1;
-            stats.fail_high <- stats.fail_high + 1;
-            beta)
-          else loop (Int.max alpha score) rest
-      in
-      loop alpha sorted_moves))
+  (* The in-check branch below recurses through quiet evasions, so repetition
+     and 50-move draws are reachable inside qsearch and must be scored. *)
+  if P.is_draw pos ply
+  then T.value_draw
   else (
-    let stand_pat = static_eval pos is_white in
-    let alpha = if stand_pat > alpha then stand_pat else alpha in
-    if stand_pat >= beta
-    then beta
-    else if stand_pat + qsearch_delta_margin <= alpha
-    then alpha
-    else (
-      let moves =
-        generated_capture_moves pos
-        |> List.filter ~f:(fun move ->
-          match T.get_ppt move with
-          | Some T.QUEEN -> true
-          | Some _ -> false
-          | None -> P.see_ge pos move qsearch_see_threshold)
-        |> List.filter ~f:(fun move ->
-          let move_gain =
-            match P.piece_on pos (T.move_dst move) with
-            | Some p -> T.piece_value p
-            | None ->
-              (match T.get_ppt move with
-               | Some ppt -> T.piece_type_value ppt
-               | None -> 0)
-          in
-          stand_pat + move_gain + qsearch_delta_margin > alpha)
-      in
+    let in_check = P.is_in_check pos in
+    if qdepth <= 0 || (in_check && check_depth <= 0)
+    then if in_check then static_eval pos is_white else alpha
+    else if in_check
+    then (
+      (* In-check path: don't compute stand_pat — none of the branches below use
+       it when in_check, so the eval call would be wasted. *)
+      let moves = generate_moves pos in
       if List.is_empty moves
-      then alpha
+      then -(T.value_mate - ply)
       else (
         let sorted_moves =
-          ordered_moves_by_score
-            moves
-            ~score:(fun m -> 2000000 + capture_order_score pos m)
+          ordered_moves_by_score moves ~score:(fun m ->
+            2000000 + capture_order_score pos m)
         in
         let rec loop alpha = function
           | [] -> alpha
@@ -523,7 +474,7 @@ let rec qsearch pos alpha beta is_white ply history ~stats ~qdepth ~check_depth 
                  (m :: history)
                  ~stats
                  ~qdepth:(qdepth - 1)
-                 ~check_depth:qsearch_check_depth
+                 ~check_depth:(check_depth - 1)
             in
             if score >= beta
             then (
@@ -532,7 +483,63 @@ let rec qsearch pos alpha beta is_white ply history ~stats ~qdepth ~check_depth 
               beta)
             else loop (Int.max alpha score) rest
         in
-        loop alpha sorted_moves)))
+        loop alpha sorted_moves))
+    else (
+      let stand_pat = static_eval pos is_white in
+      let alpha = if stand_pat > alpha then stand_pat else alpha in
+      if stand_pat >= beta
+      then beta
+      else if stand_pat + qsearch_delta_margin <= alpha
+      then alpha
+      else (
+        let moves =
+          generated_capture_moves pos
+          |> List.filter ~f:(fun move ->
+            match T.get_ppt move with
+            | Some T.QUEEN -> true
+            | Some _ -> false
+            | None -> P.see_ge pos move qsearch_see_threshold)
+          |> List.filter ~f:(fun move ->
+            let move_gain =
+              match P.piece_on pos (T.move_dst move) with
+              | Some p -> T.piece_value p
+              | None ->
+                (match T.get_ppt move with
+                 | Some ppt -> T.piece_type_value ppt
+                 | None -> 0)
+            in
+            stand_pat + move_gain + qsearch_delta_margin > alpha)
+        in
+        if List.is_empty moves
+        then alpha
+        else (
+          let sorted_moves =
+            ordered_moves_by_score moves ~score:(fun m ->
+              2000000 + capture_order_score pos m)
+          in
+          let rec loop alpha = function
+            | [] -> alpha
+            | m :: rest ->
+              let score =
+                -qsearch
+                   (P.do_move' pos m)
+                   (-beta)
+                   (-alpha)
+                   (not is_white)
+                   (ply + 1)
+                   (m :: history)
+                   ~stats
+                   ~qdepth:(qdepth - 1)
+                   ~check_depth:qsearch_check_depth
+              in
+              if score >= beta
+              then (
+                stats.cutoffs <- stats.cutoffs + 1;
+                stats.fail_high <- stats.fail_high + 1;
+                beta)
+              else loop (Int.max alpha score) rest
+          in
+          loop alpha sorted_moves))))
 ;;
 
 let rec pvSearch
