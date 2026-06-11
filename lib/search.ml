@@ -441,7 +441,7 @@ let pv_from_tt (pos : P.t) tt max_len =
   loop pos [] max_len
 ;;
 
-let rec qsearch pos alpha beta is_white ply history ~stats ~qdepth ~check_depth =
+let rec qsearch pos alpha beta is_white ply ~stats ~qdepth ~check_depth =
   stats.qnodes <- stats.qnodes + 1;
   (* The in-check branch below recurses through quiet evasions, so repetition
      and 50-move draws are reachable inside qsearch and must be scored. *)
@@ -473,7 +473,6 @@ let rec qsearch pos alpha beta is_white ply history ~stats ~qdepth ~check_depth 
                  (-alpha)
                  (not is_white)
                  (ply + 1)
-                 (m :: history)
                  ~stats
                  ~qdepth:(qdepth - 1)
                  ~check_depth:(check_depth - 1)
@@ -529,7 +528,6 @@ let rec qsearch pos alpha beta is_white ply history ~stats ~qdepth ~check_depth 
                    (-alpha)
                    (not is_white)
                    (ply + 1)
-                   (m :: history)
                    ~stats
                    ~qdepth:(qdepth - 1)
                    ~check_depth:qsearch_check_depth
@@ -552,7 +550,6 @@ let rec pvSearch
           beta
           is_white
           ply
-          history
           ~(stats : stats)
           ~may_prune
           ~tt
@@ -581,14 +578,6 @@ let rec pvSearch
     then value + ply
     else value
   in
-  (* TODO: Can I add compile time constant for debugging? *)
-  (* Stdlib.print_endline *)
-  (* @@ String.concat ~sep:" " *)
-  (* @@ List.rev *)
-  (* @@ List.map ~f:T.show_move history; *)
-  (* Whether or not we should attempt null move pruning *)
-
-  (* Attempt null move pruning if we can, return an optional score if we get a cutoff *)
   let remaining_depth = max_depth - curr_ply in
   if P.is_draw pos ply
   then T.value_draw
@@ -639,7 +628,6 @@ let rec pvSearch
               (-beta + 1)
               (not is_white)
               (ply + 1)
-              (T.null_move :: history)
               ~stats
               ~may_prune
               ~tt
@@ -661,7 +649,6 @@ let rec pvSearch
           (-alpha)
           (not is_white)
           (ply + 1)
-          (move :: history)
           ~stats
           ~may_prune:(not @@ P.is_capture pos move)
           ~tt
@@ -828,7 +815,6 @@ let rec pvSearch
           beta
           is_white
           ply
-          history
           ~stats
           ~qdepth:qsearch_max_depth
           ~check_depth:qsearch_check_depth
@@ -937,7 +923,6 @@ let get_best_move ?(instrumentation = default_instrumentation) (pos : P.t) max_d
              (-alpha)
              (not (P.is_white_to_move pos))
              root_search_ply
-             [ move ]
              ~stats
              ~may_prune:(not @@ P.is_capture pos move)
              ~tt
