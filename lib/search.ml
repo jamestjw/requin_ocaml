@@ -815,97 +815,98 @@ let rec pvSearch
         score
       | None -> None
     in
-    (* This takes into account the 50 move rule and threehold repetition *)
-    if remaining_depth <= 0
-    then
-      qsearch
-        pos
-        alpha
-        beta
-        is_white
-        ply
-        history
-        ~stats
-        ~qdepth:qsearch_max_depth
-        ~check_depth:qsearch_check_depth
-    else if
-      (not is_in_check)
-      && (not is_pv)
-      && remaining_depth <= 3
-      && may_prune
-      && eval_value >= beta + reverse_futility_margin remaining_depth
-    then beta
-    else (
-      match process_tt_entry remaining_depth tt_entry with
-      | Some score -> score
-      | None ->
-        (match maybe_attempt_nmp pos with
-         | Some score -> score
-         | None ->
-           let hash_move =
-             Option.bind tt_entry ~f:(fun entry ->
-               if T.move_not_none entry.move && P.legal pos entry.move
-               then Some entry.move
-               else None)
-           in
-           let move_picker =
-             mk_move_picker
-               pos
-               ~history_tbl
-               ~hash_move
-               ~killer_moves:(K.get_killers killers ply)
-           in
-           (match next_move move_picker with
-            | None ->
-              (* Either draw or mate *)
-              if P.is_in_check pos then -(T.value_mate - ply) else T.value_draw
-            | Some (first_stage, first_move) ->
-              let rec loop_moves
-                        (acc : int * T.move option * bool * int * T.move list)
-                        current_stage
-                        current_move
-                =
-                match do_move acc current_stage current_move with
-                | Continue_or_stop.Continue next_acc ->
-                  (match next_move move_picker with
-                   | None ->
-                     let a, b, _, i, _ = next_acc in
-                     a, b, false, i
-                   | Some (stage, move) -> loop_moves next_acc stage move)
-                | Continue_or_stop.Stop (score, best_move, _, next_idx, _) ->
-                  score, best_move, true, next_idx
-              in
-              let score, best_move, is_cut, _ =
-                loop_moves (alpha, None, true, 0, []) first_stage first_move
-              in
-              if (not is_cut) && score <= alpha_orig
-              then stats.fail_low <- stats.fail_low + 1;
-              if not is_cut
-              then (
-                match best_move, is_null_window with
-                | Some m, false ->
-                  ignore
-                  @@ TT.store
-                       tt
-                       ~key:(P.key pos)
-                       ~m
-                       ~depth:remaining_depth
-                       ~eval_value
-                       ~value:(value_to_tt score ply)
-                       ~bound:TT.BOUND_EXACT
-                | None, _ ->
-                  (* It's fine to set an upper bound even if we are doing a null move search *)
-                  ignore
-                  @@ TT.store
-                       tt
-                       ~key:(P.key pos)
-                       ~m:T.none_move
-                       ~depth:remaining_depth
-                       ~eval_value
-                       ~value:(value_to_tt score ply)
-                       ~bound:TT.BOUND_UPPER
-                | _ -> ());
-              score))))
+    (* The TT cutoff applies at every depth: entries are stored with depth >= 1,
+       so a hit always satisfies the depth condition of a qsearch-bound node. *)
+    match process_tt_entry remaining_depth tt_entry with
+    | Some score -> score
+    | None ->
+      if remaining_depth <= 0
+      then
+        qsearch
+          pos
+          alpha
+          beta
+          is_white
+          ply
+          history
+          ~stats
+          ~qdepth:qsearch_max_depth
+          ~check_depth:qsearch_check_depth
+      else if
+        (not is_in_check)
+        && (not is_pv)
+        && remaining_depth <= 3
+        && may_prune
+        && eval_value >= beta + reverse_futility_margin remaining_depth
+      then beta
+      else (
+        match maybe_attempt_nmp pos with
+        | Some score -> score
+        | None ->
+          let hash_move =
+            Option.bind tt_entry ~f:(fun entry ->
+              if T.move_not_none entry.move && P.legal pos entry.move
+              then Some entry.move
+              else None)
+          in
+          let move_picker =
+            mk_move_picker
+              pos
+              ~history_tbl
+              ~hash_move
+              ~killer_moves:(K.get_killers killers ply)
+          in
+          (match next_move move_picker with
+           | None ->
+             (* Either draw or mate *)
+             if P.is_in_check pos then -(T.value_mate - ply) else T.value_draw
+           | Some (first_stage, first_move) ->
+             let rec loop_moves
+                       (acc : int * T.move option * bool * int * T.move list)
+                       current_stage
+                       current_move
+               =
+               match do_move acc current_stage current_move with
+               | Continue_or_stop.Continue next_acc ->
+                 (match next_move move_picker with
+                  | None ->
+                    let a, b, _, i, _ = next_acc in
+                    a, b, false, i
+                  | Some (stage, move) -> loop_moves next_acc stage move)
+               | Continue_or_stop.Stop (score, best_move, _, next_idx, _) ->
+                 score, best_move, true, next_idx
+             in
+             let score, best_move, is_cut, _ =
+               loop_moves (alpha, None, true, 0, []) first_stage first_move
+             in
+             if (not is_cut) && score <= alpha_orig
+             then stats.fail_low <- stats.fail_low + 1;
+             if not is_cut
+             then (
+               match best_move, is_null_window with
+               | Some m, false ->
+                 ignore
+                 @@ TT.store
+                      tt
+                      ~key:(P.key pos)
+                      ~m
+                      ~depth:remaining_depth
+                      ~eval_value
+                      ~value:(value_to_tt score ply)
+                      ~bound:TT.BOUND_EXACT
+               | None, _ ->
+                 (* It's fine to set an upper bound even if we are doing a null move search *)
+                 ignore
+                 @@ TT.store
+                      tt
+                      ~key:(P.key pos)
+                      ~m:T.none_move
+                      ~depth:remaining_depth
+                      ~eval_value
+                      ~value:(value_to_tt score ply)
+                      ~bound:TT.BOUND_UPPER
+               | _ -> ());
+             score)))
 ;;
 
 let get_best_move ?(instrumentation = default_instrumentation) (pos : P.t) max_depth
