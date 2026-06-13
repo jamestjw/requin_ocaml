@@ -170,6 +170,19 @@ let%test_unit "can search start position" =
   assert true
 ;;
 
+[@@@ocamlformat "disable"]
+
+let%test_unit "root search avoids a drawing repetition move" =
+  (* Lichess: https://lichess.org/pbyr36Lp *)
+  let pos = play_uci_moves P.from_start_pos [ "e2e4"; "b8c6"; "d2d4"; "h7h5"; "g1f3"; "g8f6"; "d4d5"; "c6b4"; "e4e5"; "f6d5"; "a2a3"; "b4c2"; "d1c2"; "e7e6"; "f1d3"; "d8e7"; "e1h1"; "e7c5"; "b1c3"; "h5h4"; "c1d2"; "h4h3"; "b2b4"; "c5c6"; "b4b5"; "c6c5"; "g2g3"; "a7a6"; "b5a6"; "a8a6"; "d3a6"; "b7a6"; "f1b1"; "f8e7"; "c2b2"; "e8h8"; "c3e4"; "c5c4"; "e4g5"; "f7f6"; "g5h3"; "c4e4"; "b2b3"; "f6e5"; "h3g5"; "e7g5"; "f3g5"; "e4e2"; "d2e3"; "f8f5"; "b1e1"; "e2g4"; "a1c1"; "f5g5"; "b3b8"; "g5h5"; "b8c8"; "g8h7"; "c8d7"; "g4h3"; "e3c5"; "h3h2"; "g1f1"; "h2h3"; "f1e2"; "h3f5"; "d7a4"; "h5h2"; "a4a6"; "e5e4"; "e1f1"; "f5f3"; "e2e1"; "e6e5"; "a6e2"; "f3f5"; "c1c4"; "e4e3"; "c5e3"; "h7g8"; "c4c5"; "c7c6"; "c5c6"; "g8h8"; "c6c5"; "d5e3"; "e2e3"; "f5b1"; "e1e2"; "b1a2"; "e2f3"; "a2f7"; "f3e4"; "f7g6"; "e4e5"; "h2h5"; "e5f4"; "g6f7"; "f4g4"; "f7g6"; "g4f4"; "g6f7"; "f4g4"; "f7g6" ] in
+  assert (not (P.is_draw pos 0));
+  let repeated_pos = play_uci_moves pos [ "g4f4" ] in
+  assert (P.is_draw repeated_pos 1);
+  let best_move = S.get_best_move pos 8 in
+  assert (not (T.equal_move best_move @@ T.mk_move T.F4 T.G4))
+;;
+[@@@ocamlformat "enable"]
+
 let%test_unit "white avoids third repetition move from advantageous position" =
   (* https://lichess.org/H9Rj5tT4/black#84 *)
   let pos =

@@ -1444,14 +1444,8 @@ module Position = struct
         |> BB.bb_and (pieces_of_colour pos us)
       else BB.empty
     in
-    let new_st =
-      { new_st with
-        checkers_bb
-      ; key
-      ; captured_piece
-      ; repetition = get_repetition_info new_st
-      }
-    in
+    let new_st = { new_st with checkers_bb; key; captured_piece } in
+    let new_st = { new_st with repetition = get_repetition_info new_st } in
     let new_pos = { pos with st = new_st; side_to_move = them; game_ply } in
     (* We need to construct new `pos` before setting check info as it will
        expect to see the fresh state. *)
